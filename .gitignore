@@ -3,3 +3,4 @@ secrets.h
 .venv/
 *.csv
 .vscode/
+salida_fc/
