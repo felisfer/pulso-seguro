@@ -1,5 +1,9 @@
 # PulsoSeguro
 
+<p align="center">
+    <img width="50%" alt="pulso-seguro" src="https://github.com/user-attachments/assets/9fa42712-38d3-4e6a-9cc5-c42bd66b597c" />
+</p>
+
 Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO₂** con un MAX30102 y **detecta caídas** con un MPU6050. Muestra los datos en una pantalla TFT y en un dashboard web, y envía las señales crudas a **AWS IoT Core → S3** para entrenar un modelo de **predicción de FC** en Python.
 
 ## Estado del proyecto
