@@ -1,0 +1,5 @@
+certs/
+secrets.h
+.venv/
+*.csv
+.vscode/
