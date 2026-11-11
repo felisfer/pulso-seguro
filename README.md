@@ -26,6 +26,7 @@ Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO�
 - [Solución de problemas](#solución-de-problemas)
 - [Seguridad](#seguridad)
 - [Siguientes pasos](#siguientes-pasos)
+- [Estructura del repositorio](#estructura-del-repositorio)
 
 ## Arquitectura
 
@@ -77,11 +78,23 @@ flowchart TB
 
 ## Firmware
 
-| Archivo | Para qué sirve |
-|---|---|
-| `firmware/pulso_seguro_aws/` | **Firmware principal** (v4): toda la funcionalidad de la pulsera más la captura a AWS |
-| `firmware/esp32_aws_sim/` | Igual protocolo MQTT, pero con **señales simuladas** y sin sensores. Sirve para probar la conectividad con AWS |
-| `firmware/esp32_captura/` | Versión mínima que envía las señales por **USB serial** (sin red), para usar con `captura.py` |
+| Carpeta | Placa | Para qué sirve |
+|---|---|---|
+| `firmware/pulso_seguro_aws/` | ESP32-WROOM-32 | **Firmware principal** (v4): toda la funcionalidad de la pulsera (caídas, semáforo, TFT, dashboard) más la captura a AWS en una tarea del núcleo 0 |
+| `firmware/esp32_aws/` | ESP32-S3 | Solo captura: lee el MAX30102 y el MPU6050 (I²C en SDA = GPIO 8, SCL = GPIO 9) y publica los lotes en AWS. Sin pantalla, dashboard ni detección de caídas. Lotes de 24.5 KB y cola de 40 lotes (~2 min) en PSRAM; sin PSRAM, la cola baja a 2 lotes |
+| `firmware/esp32_aws_sim/` | ESP32-S3 | Mismo protocolo que `esp32_aws`, pero **sin sensores**: genera a 100 Hz señales sintéticas de PPG e IMU. Sirve para probar la conectividad y el pipeline completo (S3 → pandas) |
+
+Cada carpeta tiene su propio `secrets.h.example`; el `secrets.h` debe quedar junto al `.ino` que vas a compilar.
+
+**Firmware simulado (`esp32_aws_sim`).** La señal depende de la etiqueta que manda `control.py` en `start`:
+
+| La etiqueta contiene | FC simulada | Movimiento |
+|---|---|---|
+| `correr` | ~145 lpm | Fuerte |
+| `caminar` | ~100 lpm | Moderado |
+| cualquier otra | ~70 lpm (reposo) | Ninguno |
+
+Con `#define AUTO_START 1`, el ESP32 empieza a transmitir solo al conectarse (etiqueta `sim_reposo`) durante `AUTO_START_SEG` segundos, sin necesidad de `control.py`. El monitor serie reporta lotes enviados, encolados, muestras perdidas y reconexiones.
 
 ### Funciones de la pulsera
 
@@ -103,10 +116,20 @@ El dashboard está en `http://192.168.4.1`, conectándose a la red `PulsoSeguro-
 
 ### Compilar
 
-1. Placa: **ESP32 Dev Module** (paquete `esp32` de Espressif 3.x).
+1. Placa: **ESP32 Dev Module** para `pulso_seguro_aws`, o **ESP32S3 Dev Module** para `esp32_aws` y `esp32_aws_sim` (paquete `esp32` de Espressif 3.x).
 2. **Tools → Partition Scheme → "Huge APP (3MB No OTA/1MB SPIFFS)"**. Con TLS, el programa no cabe en la partición por defecto de 1.2 MB.
-3. Librerías: *SparkFun MAX3010x*, *Adafruit GFX*, *Adafruit ST7735 and ST7789* y **PubSubClient** (Nick O'Leary).
-4. Copia `secrets.h.example` como `secrets.h` dentro de la carpeta del sketch y llénalo con tus datos ([ver Seguridad](#seguridad)).
+3. Librerías (Gestor de librerías del IDE de Arduino):
+
+   | Librería | `pulso_seguro_aws` | `esp32_aws` | `esp32_aws_sim` |
+   |---|:-:|:-:|:-:|
+   | **PubSubClient** (Nick O'Leary) | ✓ | ✓ | ✓ |
+   | SparkFun MAX3010x Pulse and Proximity Sensor | ✓ | ✓ | |
+   | Adafruit GFX | ✓ | | |
+   | Adafruit ST7735 and ST7789 | ✓ | | |
+   | Adafruit MPU6050 | | ✓ | |
+
+   `pulso_seguro_aws` lee el MPU6050 directamente por registros, sin librería.
+4. Copia `secrets.h.example` como `secrets.h` en la carpeta del sketch y llena `WIFI_SSID`, `WIFI_PASS`, `THING_NAME`, `AWS_ENDPOINT` y los tres certificados ([ver Seguridad](#seguridad)).
 
 ## Captura de datos en AWS
 
@@ -171,26 +194,65 @@ Se usa la región `us-east-1`. Todo cabe en el plan gratuito; ver [Costos](#cost
 ## Herramientas en Python
 
 ```bash
-pip install paho-mqtt boto3 pandas pyserial
-pip install -r modelo/requirements.txt
+python -m venv .venv
+.venv\Scripts\activate             # Windows  (Linux/macOS: source .venv/bin/activate)
+pip install -r requirements.txt    # modelo: pandas, numpy, scipy, scikit-learn, matplotlib, joblib
+pip install paho-mqtt boto3        # herramientas de captura
 ```
 
 | Script | Qué hace |
 |---|---|
-| `herramientas/control.py` | Se conecta como `pc-captura` y manda `start` con la etiqueta. Después espera la duración y manda `stop`. Ejemplo: `python control.py --label reposo --sujeto s01 --duracion 60` |
-| `herramientas/cargar_s3.py` | Descarga los lotes de S3 en paralelo, interpreta los encabezados, elimina duplicados, ordena por `seq` y genera `dataset.csv` con un resumen de muestras perdidas por sesión |
-| `herramientas/captura.py` | Alternativa sin AWS: graba por USB serial con `esp32_captura` y une las sesiones con `--unir` |
+| `herramientas/control.py` | Se conecta como `pc-captura`, manda `start` con la sesión (fecha y hora), la etiqueta y el sujeto; espera la duración y manda `stop` (también al interrumpir con `Ctrl+C`). Muestra el estado `online`/`offline` del dispositivo |
+| `herramientas/cargar_s3.py` | Descarga en paralelo (16 hilos) todos los lotes bajo `raw/` del bucket, interpreta los encabezados, elimina duplicados, ordena por `seq` y genera `dataset.csv` en la carpeta actual, con un resumen de muestras perdidas por sesión |
 
-Usa variables de entorno para no dejar datos de tu cuenta en el código. Por ejemplo, `AWS_IOT_ENDPOINT` para el endpoint de IoT Core.
+```bash
+python herramientas/control.py --label reposo --sujeto s01 --duracion 60 --monitor
+python herramientas/cargar_s3.py
+```
+
+| Opción de `control.py` | Default | Descripción |
+|---|---|---|
+| `--label` | (obligatoria) | Actividad de la sesión: `reposo`, `caminar`, `correr`… |
+| `--sujeto` | `s01` | Identificador anónimo de la persona |
+| `--duracion` | `60` | Segundos entre `start` y `stop` |
+| `--monitor` | apagado | Se suscribe a `bio/<dispositivo>/data` y cuenta los lotes que llegan |
+
+Para filtrar un solo dispositivo o día en `cargar_s3.py`, cambia la constante `PREFIJO` (por ejemplo, `raw/esp32s3-01/2026/11/10/`).
+
+### Variables de entorno
+
+Los scripts leen los datos de tu cuenta de variables de entorno, para no dejarlos en el código:
+
+| Variable | Script | Valor |
+|---|---|---|
+| `AWS_IOT_ENDPOINT` | `control.py` | Endpoint `-ats` de IoT Core |
+| `AWS_IOT_DEVICE` | `control.py` | Nombre del Thing de la pulsera (el `THING_NAME` del firmware) |
+| `AWS_IOT_CA_CERTS` | `control.py` | Ruta a `AmazonRootCA1.pem` |
+| `AWS_IOT_CERTFILE` | `control.py` | Ruta al certificado del Thing `pc-captura` |
+| `AWS_IOT_KEYFILE` | `control.py` | Ruta a la llave privada de `pc-captura` |
+| `S3_BUCKET` | `cargar_s3.py` | Nombre del bucket donde escribe la Rule |
+
+`cargar_s3.py` usa las credenciales normales de `boto3` (`aws configure`, o `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`), con permiso de `s3:ListBucket` y `s3:GetObject` sobre el bucket.
+
+```powershell
+# PowerShell
+$env:AWS_IOT_ENDPOINT = "abc123xyz-ats.iot.us-east-1.amazonaws.com"
+$env:AWS_IOT_DEVICE   = "esp32s3-01"
+$env:AWS_IOT_CA_CERTS = "certs/AmazonRootCA1.pem"
+$env:AWS_IOT_CERTFILE = "certs/pc-captura.cert.pem"
+$env:AWS_IOT_KEYFILE  = "certs/pc-captura.private.key"
+$env:S3_BUCKET        = "mi-bucket-pulso-seguro"
+```
 
 ## Modelo de predicción de FC
 
 `modelo/modelo_fc.py` usa los datos hasta el instante *t* para predecir **la FC que medirá la pulsera en t + 10 s**.
 
 ```bash
-python modelo_fc.py dataset.csv                  # tus datos
-python modelo_fc.py dataset.csv --horizonte 20   # 20 s adelante
-python modelo_fc.py --demo                       # datos sintéticos
+python modelo/modelo_fc.py dataset.csv                  # tus datos
+python modelo/modelo_fc.py dataset.csv --horizonte 20   # 20 s adelante (múltiplo de 2)
+python modelo/modelo_fc.py dataset.csv --salida otra/   # otra carpeta de salida (default salida_fc/)
+python modelo/modelo_fc.py --demo                       # datos sintéticos
 ```
 
 ```mermaid
@@ -214,8 +276,8 @@ flowchart LR
 - **Líneas base.** El modelo se compara contra la **persistencia** («la FC no cambia») y contra la media de las últimas 3 ventanas. Si no supera a la persistencia, todavía no sirve.
 - **Validación.** Se usa `GroupKFold` **por sesión**, nunca filas al azar. Las ventanas consecutivas se parecen tanto que una división al azar inflaría las métricas.
 - **Salidas en `salida_fc/`:**
-  - El modelo (`.joblib`), las métricas y las predicciones.
-  - Un diagnóstico de calidad por sesión.
+  - El modelo (`modelo_fc.joblib`, con las features y el horizonte), `metricas.json` y `predicciones_validacion.csv`.
+  - Un diagnóstico de calidad por sesión (`calidad_sesiones.csv`).
   - 5 gráficas: la señal con los latidos detectados, la FC en el tiempo, el error por actividad, la importancia de las features y las ventanas rechazadas.
 
 ### Resultados actuales
@@ -266,7 +328,7 @@ Con lotes de ~10 KB, una hora de captura genera unos **2,400 lotes**. Cada lote 
 
 ## Seguridad
 
-Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas ni los datasets con información de personas. El `.gitignore` ya los excluye.
+Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas, el `.env` ni los datasets con información de personas (`dataset.csv`, `datos/`, `salida_fc/`). El `.gitignore` ya los excluye.
 
 - **Si subiste una llave privada por error**, desactiva ese certificado en *IoT Core → Security → Certificates* y crea uno nuevo. Borrar el commit no basta, porque la llave sigue en el historial y en los forks.
 - **Cambia `AP_PASSWORD`** antes de usar la pulsera fuera del laboratorio. El valor de ejemplo es público en este repositorio.
@@ -285,17 +347,23 @@ Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas
 ```text
 pulso-seguro/
 ├── firmware/
-│   ├── pulso_seguro_aws/      # firmware principal (v4)
-│   ├── esp32_aws_sim/         # señales simuladas para probar AWS
-│   ├── esp32_captura/         # captura por USB serial
-│   └── secrets.h.example
+│   ├── pulso_seguro_aws/      # firmware principal de la pulsera (v4, ESP32-WROOM-32)
+│   │   ├── pulso_seguro_aws.ino
+│   │   └── secrets.h.example
+│   ├── esp32_aws/             # solo captura de sensores a AWS (ESP32-S3)
+│   │   ├── esp32_aws.ino
+│   │   └── secrets.h.example
+│   └── esp32_aws_sim/         # señales simuladas para probar AWS (ESP32-S3)
+│       ├── esp32_aws_sim.ino
+│       └── secrets.h.example
 ├── herramientas/
 │   ├── control.py             # start / stop de sesiones por MQTT
-│   ├── cargar_s3.py           # S3 → dataset.csv
-│   └── captura.py             # captura por USB serial
+│   └── cargar_s3.py           # S3 → dataset.csv
 ├── modelo/
-│   ├── modelo_fc.py
-│   └── requirements.txt
+│   └── modelo_fc.py           # predicción de FC
+├── requirements.txt           # dependencias del modelo
 ├── .gitignore
 └── README.md
 ```
+
+Carpetas locales que no se suben (ver `.gitignore`): `certs/`, `.venv/`, `secrets.h`, `dataset.csv` y `salida_fc/`.
