@@ -1,0 +1,36 @@
+# --- Credenciales: NUNCA al repositorio ---
+secrets.h
+!secrets.h.example
+certs/
+*.pem
+*.pem.crt
+*.pem.key
+*.key
+*.crt
+.env
+
+# --- Datos de sesiones (información de personas) ---
+datos/
+dataset.csv
+*.parquet
+salida_fc/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# --- Arduino / PlatformIO / editores ---
+build/
+.pio/
+.vscode/
+.idea/
+*.bin
+*.elf
+
+# --- Sistema ---
+.DS_Store
+Thumbs.db
+desktop.ini
