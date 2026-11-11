@@ -11,7 +11,6 @@ import os
 
 ENDPOINT = os.environ["AWS_IOT_ENDPOINT"]
 DISPOSITIVO = os.environ["AWS_IOT_DEVICE"]
-CERTS = os.environ["AWS_IOT_CERTS"]
 CA_CERTS = os.environ["AWS_IOT_CA_CERTS"]
 CERTFILE = os.environ["AWS_IOT_CERTFILE"]
 KEYFILE = os.environ["AWS_IOT_KEYFILE"]
