@@ -1,12 +1,13 @@
 # PulsoSeguro
 
-Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO₂** con un MAX30102 y **detecta caídas** con un MPU6050. Muestra los datos en una pantalla TFT y en un dashboard web, y envía las señales crudas a **AWS IoT Core → S3** para entrenar un modelo de **predicción de FC** en Python.
+Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO₂** con un MAX30102 y **detecta caídas** con un MPU6050. Muestra los datos en una pantalla TFT y envía las señales crudas a **AWS IoT Core → S3** para entrenar un modelo de **predicción de FC** en Python.
 
 ## Estado del proyecto
 
 | Componente | Estado |
 |---|---|
-| Firmware: caídas, semáforo de FC/SpO₂, pantalla TFT y dashboard web | ✅ Funcional (pruebas P3, P4, P8 y P19) |
+| Firmware v4: caídas, semáforo de FC/SpO₂, pantalla TFT, dashboard web y captura a AWS | ✅ Funcional (pruebas P3, P4, P8 y P19) |
+| Firmware v5: sin potenciómetro, LED RGB ni punto de acceso (umbral de impacto fijo en 1.5 g) | 🟡 Compila; pendiente validar en la placa y repetir P3 |
 | Captura de señales a AWS IoT Core (MQTT/TLS) → S3 | ✅ Funcional con datos reales |
 | Carga del dataset en pandas (`cargar_s3.py`) | ✅ Funcional |
 | FC de referencia a partir del PPG | ✅ 93-100 % de ventanas válidas en reposo |
@@ -32,11 +33,10 @@ Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO�
 
 ```mermaid
 flowchart TB
-    Cel["Celular / PC<br/>dashboard 192.168.4.1"]
     subgraph Pulsera["Pulsera · ESP32-WROOM-32"]
         direction LR
         S["MAX30102 · PPG 100 Hz<br/>MPU6050 · acel. + giro"]
-        N1["Núcleo 1<br/>caídas · semáforo · TFT · web"]
+        N1["Núcleo 1<br/>caídas · semáforo · TFT · botón"]
         N0["Núcleo 0<br/>tarea MQTT/TLS"]
         S --> N1
         N1 -- "lotes de ~10 KB" --> N0
@@ -51,14 +51,13 @@ flowchart TB
     PC["PC · control.py<br/>start / stop + etiqueta"]
     ML["cargar_s3.py → dataset.csv<br/>modelo_fc.py"]
 
-    Cel -. "Wi-Fi AP" .- N1
     N0 -- "bio/thing/data" --> IoT
     IoT -- "bio/thing/cmd" --> N0
     PC -- "cmd" --> IoT
     S3 --> ML
 ```
 
-- **Modo Wi-Fi AP + STA.** El ESP32 crea su propia red (`PulsoSeguro-ESP32`) para el dashboard y, al mismo tiempo, se conecta a un router con internet para llegar a AWS.
+- **Wi-Fi solo en modo estación (STA).** El ESP32 se conecta a un router con internet para llegar a AWS. Desde la versión 5 ya no crea su propia red ni sirve el dashboard web: la información local se ve en la pantalla TFT.
 - **Dos núcleos.** Una reconexión TLS bloquea de 1 a 3 s, y la detección de caídas lee el MPU6050 cada 10 ms. Por eso MQTT corre en una tarea de FreeRTOS en el núcleo 0, y la lógica de la pulsera nunca espera a la red.
 - **El broker no guarda datos.** Una Rule de IoT Core escribe cada lote como un archivo en S3, sin servicios intermedios.
 
@@ -69,19 +68,19 @@ flowchart TB
 | MPU6050 (I²C `0x68`) | SDA = GPIO 21, SCL = GPIO 22 |
 | MAX30102 (I²C `0x57`) | Mismo bus I²C |
 | Pantalla TFT 2.8" ST7789 240×320 (SPI) | CS = 15, DC = 16, RST = 4, MOSI = 23, SCK = 18, BLK = 32, VCC = 3V3 |
-| Potenciómetro 10 kΩ | GPIO 34 (ADC1, solo entrada) |
 | Botón | GPIO 27 → GND (`INPUT_PULLUP`) |
-| LED RGB (cátodo común, 220 Ω) | R = 25, G = 26, B = 33 |
 | Buzzer pasivo | GPIO 13 |
 
 > La línea DC de la pantalla se movió de GPIO 2 a GPIO 16. El GPIO 2 es un *strapping pin*: si está en HIGH al arrancar, impide cargar código.
+>
+> En la versión 5 se quitaron del circuito el potenciómetro (antes GPIO 34) y el LED RGB (antes GPIO 25, 26 y 33). Los demás pines no cambiaron.
 
 ## Firmware
 
 | Carpeta | Placa | Para qué sirve |
 |---|---|---|
-| `firmware/pulso_seguro_aws/` | ESP32-WROOM-32 | **Firmware principal** (v4): toda la funcionalidad de la pulsera (caídas, semáforo, TFT, dashboard) más la captura a AWS en una tarea del núcleo 0 |
-| `firmware/esp32_aws/` | ESP32-S3 | Solo captura: lee el MAX30102 y el MPU6050 (I²C en SDA = GPIO 8, SCL = GPIO 9) y publica los lotes en AWS. Sin pantalla, dashboard ni detección de caídas. Lotes de 24.5 KB y cola de 40 lotes (~2 min) en PSRAM; sin PSRAM, la cola baja a 2 lotes |
+| `firmware/pulso_seguro_aws/` | ESP32-WROOM-32 | **Firmware principal** (v5): toda la funcionalidad de la pulsera (caídas, semáforo, TFT, botón y buzzer) más la captura a AWS en una tarea del núcleo 0 |
+| `firmware/esp32_aws/` | ESP32-S3 | Solo captura: lee el MAX30102 y el MPU6050 (I²C en SDA = GPIO 8, SCL = GPIO 9) y publica los lotes en AWS. Sin pantalla ni detección de caídas. Lotes de 24.5 KB y cola de 40 lotes (~2 min) en PSRAM; sin PSRAM, la cola baja a 2 lotes |
 | `firmware/esp32_aws_sim/` | ESP32-S3 | Mismo protocolo que `esp32_aws`, pero **sin sensores**: genera a 100 Hz señales sintéticas de PPG e IMU. Sirve para probar la conectividad y el pipeline completo (S3 → pandas) |
 
 Cada carpeta tiene su propio `secrets.h.example`; el `secrets.h` debe quedar junto al `.ino` que vas a compilar.
@@ -100,15 +99,15 @@ Con `#define AUTO_START 1`, el ESP32 empieza a transmitir solo al conectarse (et
 
 | Regla | Comportamiento |
 |---|---|
-| R1 | Caída en 4 fases: caída libre (< 0.7 g) → impacto (1.5-2.5 g) → inmovilidad (±0.3 g durante 0.5-2.5 s) → cambio de orientación (≥ 60°) |
+| R1 | Caída en 4 fases: caída libre (< 0.7 g) → impacto (> 1.5 g, umbral fijo) → inmovilidad (±0.3 g durante 0.5-2.5 s) → cambio de orientación (≥ 60°) |
 | R2 | 15 s para cancelar; si no se cancela, alarma completa (máximo 60 s de sonido) |
-| R3 | Semáforo de FC (verde 60-100, amarillo 50-120 lpm) y SpO₂ (verde ≥ 95 %, amarillo ≥ 90 %) |
+| R3 | Semáforo de FC (verde 60-100, amarillo 50-120 lpm) y SpO₂ (verde ≥ 95 %, amarillo ≥ 90 %) en la pantalla |
 | R4 | Pulsación corta (< 1 s): silencia o cancela |
 | R5 | Pulsación larga (3 s): botón de pánico |
-| R6 | El potenciómetro ajusta la sensibilidad del impacto (1.5 a 2.5 g) |
-| R7 | Botón «Silenciar» en el dashboard |
 
-El dashboard está en `http://192.168.4.1`, conectándose a la red `PulsoSeguro-ESP32`. La pantalla redibuja una sola región por vuelta del `loop()` y no se actualiza mientras se analiza un posible impacto, para no perder muestras del pico.
+R6 (sensibilidad con el potenciómetro) y R7 (botón «Silenciar» en el dashboard) se eliminaron en la versión 5. El umbral de impacto quedó fijo en 1.5 g (`UMBRAL_IMPACTO_G`), el valor de máxima sensibilidad, porque en P3 los picos de las caídas fueron de 1.67-2.22 g. La alarma solo se silencia con el botón.
+
+La pantalla muestra el estado y su cuenta regresiva, la FC y la SpO₂ con el color del semáforo, el umbral de impacto, el último evento y, en el encabezado, el estado de Wi-Fi y de AWS (`OK`, `REC` mientras graba). La pantalla redibuja una sola región por vuelta del `loop()` y no se actualiza mientras se analiza un posible impacto, para no perder muestras del pico.
 
 **Valores medidos en las pruebas:**
 - P3: en caídas del brazo, caída libre de 0.26-0.56 g, pico de 1.67-2.22 g y cambio de orientación de 70-87°. En saltos, la orientación cambia solo 1-9°.
@@ -331,11 +330,11 @@ Con lotes de ~10 KB, una hora de captura genera unos **2,400 lotes**. Cada lote 
 Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas, el `.env` ni los datasets con información de personas (`dataset.csv`, `datos/`, `salida_fc/`). El `.gitignore` ya los excluye.
 
 - **Si subiste una llave privada por error**, desactiva ese certificado en *IoT Core → Security → Certificates* y crea uno nuevo. Borrar el commit no basta, porque la llave sigue en el historial y en los forks.
-- **Cambia `AP_PASSWORD`** antes de usar la pulsera fuera del laboratorio. El valor de ejemplo es público en este repositorio.
 - **Los datos fisiológicos son datos personales.** Usa identificadores como `s01` en lugar de nombres, y no publiques los CSV sin el consentimiento de los participantes.
 
 ## Siguientes pasos
 
+- [ ] Validar el firmware v5 en la placa y repetir P3 con el umbral fijo de 1.5 g (10 caídas, 10 saltos, 10 movimientos cotidianos).
 - [ ] Fijar el sensor a la muñeca o al dedo con presión constante.
 - [ ] Grabar sesiones con transiciones (reposo → caminar → escaleras → reposo, ~4 min), de 2-3 personas, con al menos 6-8 sesiones en total.
 - [ ] Validar la FC de referencia contra un oxímetro comercial.
@@ -347,7 +346,7 @@ Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas
 ```text
 pulso-seguro/
 ├── firmware/
-│   ├── pulso_seguro_aws/      # firmware principal de la pulsera (v4, ESP32-WROOM-32)
+│   ├── pulso_seguro_aws/      # firmware principal de la pulsera (v5, ESP32-WROOM-32)
 │   │   ├── pulso_seguro_aws.ino
 │   │   └── secrets.h.example
 │   ├── esp32_aws/             # solo captura de sensores a AWS (ESP32-S3)
