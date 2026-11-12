@@ -1,31 +1,28 @@
 /*
  * ============================================================================
  * PulsoSeguro - Pulsera IoT de monitoreo de signos vitales y detección de caídas
- * Tecnologías Computacionales II - Facultad de Ingeniería, UAEMéx - 2026B
- * Versión 3: pantalla TFT 2.8" ST7789 integrada (dibujo por regiones, sin bloqueos)
+ * Computing in industry - Facultad de Ingeniería, UAEMéx - 2026B
  * ============================================================================
  *
  * Hardware (ESP32-WROOM-32):
  *    MPU6050 (I2C 0x68) ........ SDA = GPIO 21, SCL = GPIO 22
  *    MAX30102 (I2C 0x57) ........ mismo bus I2C (SDA 21, SCL 22)
- *    Potenciómetro 10 kΩ ........ GPIO 34 (ADC1, solo entrada)
  *    Push button ................ GPIO 27 -> GND (INPUT_PULLUP)
- *    LED RGB (cátodo común) ..... R = GPIO 25, G = GPIO 26, B = GPIO 33 (con resistencias de 220 Ω)
  *    Buzzer pasivo .............. GPIO 13
  *    TFT ST7789 240x320 (SPI) ... CS = GPIO 15, DC = GPIO 16, RST = GPIO 4,
  *                                 MOSI = GPIO 23, SCK = GPIO 18, BLK = GPIO 32, VCC = 3V3
  *    Cambio respecto a la prueba de la pantalla: DC pasa de GPIO 2 a GPIO 16, porque el
  *    GPIO 2 es un strapping pin (debe estar en LOW/flotante al arrancar para poder cargar código).
  *
- * Comunicación IoT:
- *    El ESP32 crea un punto de acceso Wi-Fi. Desde el celular o la computadora
- *    conectarse a la red "PulsoSeguro-ESP32" y abrir http://192.168.4.1
+ * Cambios:
+ *    - El umbral de impacto es fijo (UMBRAL_IMPACTO_G = 1.5 g, el valor
+ *      de máxima sensibilidad, con el que P3 detectó las caídas con picos de 1.67-2.22 g).
+ *    - Las indicaciones del LED las cubren la pantalla TFT y el buzzer.
+ *      El ESP32 solo se conecta como estación a la red con internet para AWS IoT.
  *
  * Captura de datos a AWS IoT Core (versión 4):
- *    - Wi-Fi en modo AP + STA: el punto de acceso y el dashboard siguen igual, y al
- *      mismo tiempo el ESP32 se conecta a una red con internet (WIFI_SSID en secrets.h).
- *      Nota: el AP adopta el canal del router; al conectarse, el celular puede
- *      desconectarse un momento del AP y reconectarse solo.
+ *    - Wi-Fi en modo estación (STA): el ESP32 se conecta a una red con internet
+ *      (WIFI_SSID en secrets.h).
  *    - MQTT/TLS corre en una tarea propia en el núcleo 0. La detección de caídas, la
  *      pantalla y el botón siguen en el núcleo 1 y nunca esperan a la red.
  *    - control.py manda {"cmd":"start", ...} / {"cmd":"stop"} a bio/<THING_NAME>/cmd.
@@ -40,16 +37,15 @@
  * Reglas automatizadas:
  *    R1 Detección de caída en 4 fases: caída libre -> impacto -> inmovilidad -> cambio de orientación
  *    R2 Ventana de confirmación de 15 s; si no se cancela, alarma completa (máximo 60 s de sonido)
- *    R3 Semáforo de FC y SpO2 en el dashboard y en la pantalla (verde/amarillo/rojo)
+ *    R3 Semáforo de FC y SpO2 en la pantalla (verde/amarillo/rojo)
  *    R4 Pulsación corta (< 1 s): silencia / cancela + pitido corto
  *    R5 Pulsación larga (3 s): botón de pánico
- *    R6 Potenciómetro: ajusta la sensibilidad de caída (1.5 a 2.5 g) y el LED muestra el nivel 2 s
- *    R7 Botón "Silenciar" en el dashboard (misma acción que la pulsación corta)
+ *    (R6 potenciómetro y R7 "Silenciar" desde el dashboard se eliminaron en la versión 5)
  *    Tras silenciar se esperan 10 s antes de volver a detectar caídas.
  *
  * Pantalla (versión 3):
  *    - Muestra el estado, la cuenta regresiva, FC y SpO2 con el color del semáforo,
- *      la sensibilidad y el último evento.
+ *      el umbral de impacto y el último evento.
  *    - Nunca se borra la pantalla completa en el loop(): solo se redibuja la región que
  *      cambió, una región por vuelta del ciclo, para no retrasar la lectura del MPU6050 (10 ms).
  *    - Mientras se analiza un posible impacto (3.8 s) la pantalla no se actualiza,
@@ -71,7 +67,6 @@
  */
 
 #include <WiFi.h>
-#include <WebServer.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <stdarg.h>
@@ -87,20 +82,12 @@
 // ----------------------------------------------------------------------------
 // Configuración general
 // ----------------------------------------------------------------------------
-const char* AP_SSID     = "PulsoSeguro-ESP32";
-const char* AP_PASSWORD = "123456789";          // mínimo 8 caracteres
-
-const bool LED_ANODO_COMUN = false;             // P8: el LED es de cátodo común
 const bool BUZZER_PASIVO   = true;              // P8: el buzzer es pasivo
 
 // Pines
 const int PIN_SDA    = 21;
 const int PIN_SCL    = 22;
-const int PIN_POT    = 34;
 const int PIN_BOTON  = 27;
-const int PIN_LED_R  = 25;
-const int PIN_LED_G  = 26;
-const int PIN_LED_B  = 33;
 const int PIN_BUZZER = 13;
 
 // Pantalla TFT ST7789 (SPI por hardware, VSPI)
@@ -117,15 +104,13 @@ const unsigned long ALARMA_MAX_SONIDO_MS    = 60000;   // R2: sonido máximo 1 m
 const unsigned long ESPERA_TRAS_SILENCIO_MS = 10000;   // espera antes de volver a detectar
 const unsigned long PULSACION_CORTA_MS      = 1000;    // R4
 const unsigned long PULSACION_LARGA_MS      = 3000;    // R5
-const unsigned long MOSTRAR_NIVEL_POT_MS    = 2000;    // R6
 const unsigned long ANTIRREBOTE_MS          = 30;      // P7: 0 rebotes observados
 
 // Detección de caída (R1) - ajustada con la prueba P3
 const float DISPARO_G              = 1.5;     // a partir de aquí se analiza el movimiento
 const float CAIDA_LIBRE_G          = 0.7;     // fase 1: mínimo antes del impacto
 const unsigned long CAIDA_LIBRE_MAX_MS = 800; //          tiempo máximo entre caída libre e impacto
-const float IMPACTO_MIN_G          = 1.5;     // fase 2: umbral con sensibilidad máxima (potenciómetro 100 %)
-const float IMPACTO_MAX_G          = 2.5;     //          umbral con sensibilidad mínima (potenciómetro 0 %)
+const float UMBRAL_IMPACTO_G       = 1.5;     // fase 2: umbral fijo (antes 1.5-2.5 g con el potenciómetro)
 const float TOLERANCIA_INMOVIL_G   = 0.3;     // fase 3: |magnitud - 1 g| máximo entre 0.5 y 2.5 s
 const float CAMBIO_ORIENTACION_MIN = 60.0;    // fase 4: grados entre la gravedad antes y después
 const unsigned long ANALISIS_MS    = 3500;    // la caída se confirma 3.5 s después del impacto
@@ -150,7 +135,6 @@ const unsigned long TFT_PAUSA_MS   = 40;      // tiempo mínimo entre el dibujo 
 // ----------------------------------------------------------------------------
 // Objetos globales
 // ----------------------------------------------------------------------------
-WebServer server(80);
 MAX30105 oximetro;
 Adafruit_ST7789 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
 bool oximetroOK = false;
@@ -181,7 +165,7 @@ EstadoSistema estado = NORMAL;
 unsigned long tEstado = 0;
 bool alarmaPorPanico = false;
 
-// Registro de eventos para el dashboard y la pantalla
+// Registro de eventos (la pantalla muestra el más reciente)
 struct Evento { unsigned long t; char msg[96]; };
 const int MAX_EVENTOS = 12;
 Evento eventos[MAX_EVENTOS];
@@ -196,221 +180,6 @@ void registrarEvento(const char* formato, ...) {
   Serial.printf("[%lu ms] EVENTO: %s\n", millis(), eventos[idxEvento].msg);
   idxEvento = (idxEvento + 1) % MAX_EVENTOS;
   if (numEventos < MAX_EVENTOS) numEventos++;
-}
-
-// ----------------------------------------------------------------------------
-// Página web del dashboard (guardada en la memoria del ESP32).
-// No usa librerías externas porque el celular no tiene internet en esta red.
-// ----------------------------------------------------------------------------
-const char PAGINA[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PulsoSeguro</title>
-<link rel="icon" href="data:,">
-<style>
-:root{--bg:#f3f5f8;--card:#fff;--txt:#1d2433;--sub:#667085;--borde:#e3e7ee;
---verde:#16a34a;--amarillo:#d99a00;--rojo:#dc2626;--gris:#98a2b3;--azul:#2563eb;}
-@media (prefers-color-scheme: dark){:root{--bg:#10141c;--card:#1a202b;--txt:#e8ecf3;--sub:#98a2b3;--borde:#2a3342;}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-header{padding:16px;display:flex;justify-content:space-between;align-items:center}
-h1{font-size:20px;margin:0}
-#conn{font-size:12px;padding:4px 10px;border-radius:99px;background:var(--gris);color:#fff}
-#conn.ok{background:var(--verde)}
-main{display:grid;gap:12px;padding:0 16px 24px;max-width:900px;margin:0 auto;grid-template-columns:1fr}
-@media (min-width:700px){main{grid-template-columns:1fr 1fr}.ancho{grid-column:1/-1}}
-.card{background:var(--card);border:1px solid var(--borde);border-radius:14px;padding:14px}
-.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--sub);margin:0 0 10px}
-#estado{color:#fff;text-align:center}
-#estado.NORMAL{background:var(--verde)}#estado.ESPERA{background:var(--azul)}
-#estado.CONFIRMACION{background:var(--amarillo)}#estado.ALARMA{background:var(--rojo);animation:parpadeo 1s infinite}
-@keyframes parpadeo{50%{opacity:.75}}
-#estado h2{color:#fff;opacity:.85}
-#estadoTxt{font-size:26px;font-weight:700}
-#estadoDet{font-size:14px;margin-top:4px;min-height:18px}
-button{width:100%;margin-top:12px;padding:14px;font-size:17px;font-weight:600;border:0;border-radius:10px;background:#fff;color:var(--rojo);cursor:pointer}
-button:disabled{opacity:.45;cursor:default}
-.semaforo{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.sig{border-radius:12px;padding:12px;color:#fff;background:var(--gris)}
-.sig.verde{background:var(--verde)}.sig.amarillo{background:var(--amarillo)}.sig.rojo{background:var(--rojo)}
-.sig .val{font-size:34px;font-weight:700}.sig .u{font-size:14px;opacity:.9}.sig .lbl{font-size:13px}
-#semMsg{margin-top:10px;font-size:14px;color:var(--sub)}
-.barra{height:12px;border-radius:99px;background:var(--borde);overflow:hidden}
-.barra div{height:100%;background:linear-gradient(90deg,var(--verde),var(--amarillo),var(--rojo))}
-.fila{display:flex;justify-content:space-between;font-size:14px;margin-top:8px}
-canvas{width:100%;height:120px;display:block}
-.dato{font-size:28px;font-weight:700}
-ul{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto}
-li{padding:7px 0;border-bottom:1px solid var(--borde);font-size:14px;display:flex;gap:10px}
-li span{color:var(--sub);font-variant-numeric:tabular-nums}
-.leyenda{font-size:12px;color:var(--sub);margin-top:4px}
-</style>
-</head>
-<body>
-<header><h1>PulsoSeguro</h1><span id="conn">Conectando…</span></header>
-<main>
-  <section class="card ancho" id="estado">
-    <h2>Estado del sistema</h2>
-    <div id="estadoTxt">—</div>
-    <div id="estadoDet"></div>
-    <button id="btnSil" disabled>Silenciar alarma</button>
-  </section>
-
-  <section class="card ancho">
-    <h2>Semáforo de signos vitales</h2>
-    <div class="semaforo">
-      <div class="sig" id="sigFC"><div class="lbl">Frecuencia cardiaca</div><div><span class="val" id="fc">--</span> <span class="u">lpm</span></div></div>
-      <div class="sig" id="sigSp"><div class="lbl">Oxigenación (SpO₂)</div><div><span class="val" id="spo2">--</span> <span class="u">%</span></div></div>
-    </div>
-    <div id="semMsg"></div>
-  </section>
-
-  <section class="card">
-    <h2>Historial de signos (último minuto)</h2>
-    <canvas id="grafFC"></canvas>
-    <div class="leyenda">FC (lpm)</div>
-    <canvas id="grafSp"></canvas>
-    <div class="leyenda">SpO₂ (%)</div>
-  </section>
-
-  <section class="card">
-    <h2>Movimiento</h2>
-    <div class="dato"><span id="mag">--</span> g</div>
-    <canvas id="grafMag"></canvas>
-    <div class="leyenda">Pico de aceleración por segundo (línea punteada = umbral de impacto)</div>
-  </section>
-
-  <section class="card">
-    <h2>Sensibilidad de caída</h2>
-    <div class="barra"><div id="barSens" style="width:0%"></div></div>
-    <div class="fila"><span>Nivel: <b id="sens">--</b> %</span><span>Umbral de impacto: <b id="umbral">--</b> g</span></div>
-    <div class="leyenda">Se ajusta con el potenciómetro de la pulsera.</div>
-  </section>
-
-  <section class="card">
-    <h2>Registro de eventos</h2>
-    <ul id="eventos"><li>Sin eventos</li></ul>
-  </section>
-</main>
-<script>
-const N=60, hFC=[], hSp=[], hMag=[];
-let umbralActual=3, ocupado=false;
-const textos={NORMAL:"Normal",CONFIRMACION:"¿Caída detectada?",ALARMA:"¡ALARMA!",ESPERA:"En espera"};
-const etiquetas={verde:"Normal",amarillo:"Irregular",rojo:"Crítico",gris:"Sin lectura"};
-
-function push(a,v){a.push(v);if(a.length>N)a.shift();}
-
-function grafica(id,datos,min,max,color,umbral){
-  const c=document.getElementById(id),r=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
-  c.width=r.width*dpr;c.height=r.height*dpr;
-  const g=c.getContext('2d');g.scale(dpr,dpr);
-  const w=r.width,h=r.height,css=getComputedStyle(document.documentElement);
-  g.clearRect(0,0,w,h);
-  g.strokeStyle=css.getPropertyValue('--borde');g.lineWidth=1;
-  for(let i=0;i<=4;i++){const y=h*i/4;g.beginPath();g.moveTo(0,y);g.lineTo(w,y);g.stroke();}
-  g.fillStyle=css.getPropertyValue('--sub');g.font='10px sans-serif';
-  g.fillText(max,2,10);g.fillText(min,2,h-2);
-  const y=v=>h-(Math.min(Math.max(v,min),max)-min)/(max-min)*h;
-  if(umbral!==undefined){g.setLineDash([5,4]);g.strokeStyle=css.getPropertyValue('--rojo');
-    g.beginPath();g.moveTo(0,y(umbral));g.lineTo(w,y(umbral));g.stroke();g.setLineDash([]);}
-  g.strokeStyle=color;g.lineWidth=2;g.beginPath();let dentro=false;
-  datos.forEach((v,i)=>{const x=w*i/(N-1);
-    if(v===null){dentro=false;return;}
-    if(!dentro){g.moveTo(x,y(v));dentro=true;}else g.lineTo(x,y(v));});
-  g.stroke();
-}
-
-function horaEvento(ahoraDisp,tEvento){
-  return new Date(Date.now()-(ahoraDisp-tEvento)).toLocaleTimeString('es-MX');
-}
-
-function mostrar(d){
-  // Estado y alarma
-  const est=document.getElementById('estado');
-  est.className='card ancho '+d.estado;
-  document.getElementById('estadoTxt').textContent=
-    d.estado==='ALARMA'?(d.panico?'¡BOTÓN DE PÁNICO!':'¡CAÍDA CONFIRMADA!'):textos[d.estado];
-  let det='';
-  if(d.estado==='CONFIRMACION')det='Presiona el botón si estás bien · '+d.restante+' s';
-  else if(d.estado==='ALARMA')det=d.sonido?('Sonando · se detiene en '+d.restante+' s'):'Sonido detenido (60 s) · alarma sin atender';
-  else if(d.estado==='ESPERA')det='Detección de caídas reanudará en '+d.restante+' s';
-  else det=d.sensores;
-  document.getElementById('estadoDet').textContent=det;
-  document.getElementById('btnSil').disabled=!(d.estado==='ALARMA'||d.estado==='CONFIRMACION');
-
-  // Semáforo (regla 3)
-  document.getElementById('fc').textContent=d.fc>0?d.fc:'--';
-  document.getElementById('spo2').textContent=d.spo2>0?d.spo2:'--';
-  document.getElementById('sigFC').className='sig '+d.semFC;
-  document.getElementById('sigSp').className='sig '+d.semSp;
-  document.getElementById('semMsg').textContent=!d.dedo?
-    'Coloca el dedo sobre el sensor para medir.':
-    (d.fc>0?'FC: '+etiquetas[d.semFC]+' · SpO₂: '+etiquetas[d.semSp]:'Midiendo… mantén el dedo quieto unos segundos.');
-
-  // Historial
-  push(hFC,d.fc>0?d.fc:null);push(hSp,d.spo2>0?d.spo2:null);push(hMag,d.magPico);
-  const verde=getComputedStyle(document.documentElement).getPropertyValue('--verde');
-  const azul=getComputedStyle(document.documentElement).getPropertyValue('--azul');
-  grafica('grafFC',hFC,40,160,'#dc2626');
-  grafica('grafSp',hSp,80,100,azul);
-  umbralActual=d.umbral;
-  grafica('grafMag',hMag,0,6,verde,d.umbral);
-
-  // Movimiento y sensibilidad
-  document.getElementById('mag').textContent=d.mag.toFixed(2);
-  document.getElementById('sens').textContent=d.sens;
-  document.getElementById('barSens').style.width=d.sens+'%';
-  document.getElementById('umbral').textContent=d.umbral.toFixed(2);
-
-  // Eventos (más reciente primero)
-  const ul=document.getElementById('eventos');
-  ul.innerHTML=d.eventos.length?'':'<li>Sin eventos</li>';
-  d.eventos.forEach(e=>{const li=document.createElement('li');
-    const s=document.createElement('span');s.textContent=horaEvento(d.ahora,e.t);
-    li.appendChild(s);li.appendChild(document.createTextNode(e.m));ul.appendChild(li);});
-}
-
-async function actualizar(){
-  if(ocupado)return;ocupado=true;
-  const conn=document.getElementById('conn');
-  try{
-    const r=await fetch('/datos',{cache:'no-store'});
-    mostrar(await r.json());
-    conn.textContent='En línea';conn.className='ok';
-  }catch(e){conn.textContent='Sin conexión';conn.className='';}
-  ocupado=false;
-}
-
-document.getElementById('btnSil').addEventListener('click',async()=>{
-  try{await fetch('/silenciar',{method:'POST'});}catch(e){}
-  actualizar();
-});
-
-setInterval(actualizar,1000);   // frecuencia de actualización: 1 segundo
-actualizar();
-</script>
-</body>
-</html>
-)rawliteral";
-
-// ----------------------------------------------------------------------------
-// LED RGB
-// ----------------------------------------------------------------------------
-void ledColor(int r, int g, int b) {
-  r = constrain(r, 0, 255); g = constrain(g, 0, 255); b = constrain(b, 0, 255);
-  if (LED_ANODO_COMUN) { r = 255 - r; g = 255 - g; b = 255 - b; }
-  ledcWrite(PIN_LED_R, r);
-  ledcWrite(PIN_LED_G, g);
-  ledcWrite(PIN_LED_B, b);
-}
-
-void ledTransicion(unsigned long periodoMs) {             // rojo <-> azul
-  float fase = (millis() % periodoMs) / (float)periodoMs;
-  float k = 0.5 - 0.5 * cos(fase * 2 * PI);
-  ledColor(255 * k, 0, 255 * (1 - k));
 }
 
 // ----------------------------------------------------------------------------
@@ -464,13 +233,13 @@ void activarPanico() {                                    // R5
   registrarEvento("Botón de pánico activado");
 }
 
-void silenciar(bool desdeDashboard) {                     // R4 y R7
+void silenciar() {                                        // R4
   pitidoCorto();
   if (estado == CONFIRMACION) {
-    registrarEvento(desdeDashboard ? "Caída cancelada desde el dashboard" : "Caída cancelada: la persona está bien");
+    registrarEvento("Caída cancelada: la persona está bien");
     cambiarEstado(ESPERA);
   } else if (estado == ALARMA) {
-    registrarEvento(desdeDashboard ? "Alarma silenciada desde el dashboard" : "Alarma silenciada con el botón");
+    registrarEvento("Alarma silenciada con el botón");
     cambiarEstado(ESPERA);
   }
 }
@@ -491,7 +260,7 @@ void actualizarEstados() {
   }
 }
 
-// Segundos que faltan para que termine el estado actual (dashboard y pantalla)
+// Segundos que faltan para que termine el estado actual (pantalla)
 long segundosRestantes() {
   unsigned long t = millis() - tEstado;
   if (estado == CONFIRMACION) return (VENTANA_CONFIRMACION_MS - min(t, VENTANA_CONFIRMACION_MS)) / 1000;
@@ -521,37 +290,12 @@ void leerBoton() {
       largaDisparada = false;
     } else {
       unsigned long duracion = millis() - tPresion;
-      if (!largaDisparada && duracion < PULSACION_CORTA_MS) silenciar(false);
+      if (!largaDisparada && duracion < PULSACION_CORTA_MS) silenciar();
     }
   }
   if (estable == LOW && !largaDisparada && millis() - tPresion >= PULSACION_LARGA_MS) {
     largaDisparada = true;
     activarPanico();
-  }
-}
-
-// ----------------------------------------------------------------------------
-// Potenciómetro (R6)
-// ----------------------------------------------------------------------------
-float potFiltrado = 0;
-int sensibilidadPct = 50, sensibilidadMostrada = -1;
-float umbralImpactoG = 2.0;
-unsigned long tMostrarNivel = 0;
-bool mostrandoNivel = false;
-
-void leerPotenciometro() {
-  static unsigned long tLectura = 0;
-  if (millis() - tLectura < 20) return;
-  tLectura = millis();
-  potFiltrado = potFiltrado * 0.8 + analogRead(PIN_POT) * 0.2;
-  sensibilidadPct = round(potFiltrado * 100.0 / 4095.0);
-  umbralImpactoG = IMPACTO_MAX_G - (IMPACTO_MAX_G - IMPACTO_MIN_G) * sensibilidadPct / 100.0;
-
-  if (sensibilidadMostrada < 0) { sensibilidadMostrada = sensibilidadPct; return; }
-  if (abs(sensibilidadPct - sensibilidadMostrada) >= 3) {
-    sensibilidadMostrada = sensibilidadPct;
-    mostrandoNivel = true;
-    tMostrarNivel = millis();
   }
 }
 
@@ -573,7 +317,7 @@ int idxH = 0, nH = 0;
 
 enum FaseCaida { FC_REPOSO, FC_PICO, FC_ANALISIS };
 FaseCaida faseCaida = FC_REPOSO;
-float pico = 0, minPrevio = 1, umbralEvento = 2.0, desvMax = 0;
+float pico = 0, minPrevio = 1, desvMax = 0;
 unsigned long tPico = 0, tMinPrevio = 0;
 float antesX = 0, antesY = 0, antesZ = 1;
 double despX = 0, despY = 0, despZ = 0; int nDesp = 0;
@@ -626,13 +370,13 @@ void iniciarAnalisis(unsigned long ahora) {
   antesX = sx / n; antesY = sy / n; antesZ = sz / n;
   if (minPrevio > 90) minPrevio = magnitudG;
 
-  pico = magnitudG; tPico = ahora; umbralEvento = umbralImpactoG;
+  pico = magnitudG; tPico = ahora;
   faseCaida = FC_PICO;
 }
 
 void evaluarCaida() {
   bool f1 = minPrevio < CAIDA_LIBRE_G && (tPico - tMinPrevio) < CAIDA_LIBRE_MAX_MS;
-  bool f2 = pico > umbralEvento;
+  bool f2 = pico > UMBRAL_IMPACTO_G;
   bool f3 = desvMax < TOLERANCIA_INMOVIL_G;
   float dx = nDesp ? despX / nDesp : antesX, dy = nDesp ? despY / nDesp : antesY, dz = nDesp ? despZ / nDesp : antesZ;
   float na = sqrt(antesX * antesX + antesY * antesY + antesZ * antesZ), nd = sqrt(dx * dx + dy * dy + dz * dz);
@@ -641,7 +385,7 @@ void evaluarCaida() {
   bool f4 = angulo > CAMBIO_ORIENTACION_MIN;
 
   Serial.printf("[%lu ms] ANÁLISIS: caída libre %.2f g %s | pico %.2f g (umbral %.2f) %s | inmóvil %.2f g %s | orientación %.0f° %s\n",
-                millis(), minPrevio, f1 ? "OK" : "NO", pico, umbralEvento, f2 ? "OK" : "NO",
+                millis(), minPrevio, f1 ? "OK" : "NO", pico, UMBRAL_IMPACTO_G, f2 ? "OK" : "NO",
                 desvMax, f3 ? "OK" : "NO", angulo, f4 ? "OK" : "NO");
 
   if (f1 && f2 && f3 && f4 && estado == NORMAL) {
@@ -657,7 +401,7 @@ void detectarCaida() {
   if (!leerAcelerometro()) return;
   unsigned long ahora = millis();
 
-  // Pico de cada segundo para la gráfica del dashboard
+  // Pico de cada segundo (encabezado de la pantalla)
   if (magnitudG > magPicoActual) magPicoActual = magnitudG;
   if (ahora - tVentanaPico >= 1000) { magPicoUltimo = magPicoActual; magPicoActual = 0; tVentanaPico = ahora; }
 
@@ -1020,38 +764,19 @@ const char* semaforoSpO2() {
   return "rojo";
 }
 
-// ----------------------------------------------------------------------------
-// LED según prioridad: alarma > confirmación > nivel del potenciómetro > espera > sin lectura > normal
-// ----------------------------------------------------------------------------
-void actualizarLED() {
-  if (estado == ALARMA)       { ledTransicion(600); return; }
-  if (estado == CONFIRMACION) { ledTransicion(2000); return; }
-  if (mostrandoNivel) {
-    if (millis() - tMostrarNivel < MOSTRAR_NIVEL_POT_MS) {
-      int r = 255 * sensibilidadPct / 100;
-      ledColor(r, 255 - r, 0);
-      return;
-    }
-    mostrandoNivel = false;
-  }
-  if (estado == ESPERA) { ledColor(0, 0, 60); return; }
-  if (!hayDedo) { ledColor(0, 0, (millis() / 500) % 2 ? 120 : 0); return; }
-  ledColor(0, 80, 0);
-}
-
 // ============================================================================
 // PANTALLA TFT ST7789 (versión 3)
 // Distribución en horizontal (320 x 240):
-//   y   0- 23  Encabezado: "PulsoSeguro", clientes Wi-Fi y pico de aceleración
+//   y   0- 23  Encabezado: "PulsoSeguro", estado de Wi-Fi/AWS y pico de aceleración
 //   y  28- 87  Estado: color según el estado, título grande y cuenta regresiva
 //   y  94-177  Dos tarjetas: FC y SpO2 con el color del semáforo
-//   y 184-213  Sensibilidad y umbral de impacto, con barra
+//   y 184-213  Umbral de impacto (fijo)
 //   y 218-239  Último evento del registro
 // ============================================================================
 constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
-// Mismos colores que el dashboard HTML (tema oscuro)
+// Paleta de colores (tema oscuro)
 const uint16_t C_FONDO    = rgb565(16, 20, 28);
 const uint16_t C_TARJETA  = rgb565(42, 51, 66);
 const uint16_t C_CABECERA = rgb565(26, 32, 43);
@@ -1135,7 +860,7 @@ void textoDerecha(int xd, int y, const char* s, uint8_t tam, uint16_t color, uin
   texto(xd - (int)strlen(s) * 6 * tam, y, s, tam, color, fondo);
 }
 
-enum { R_ENCABEZADO, R_ESTADO, R_FC, R_SPO2, R_SENS, R_EVENTO, NUM_REGIONES };
+enum { R_ENCABEZADO, R_ESTADO, R_FC, R_SPO2, R_UMBRAL, R_EVENTO, NUM_REGIONES };
 ContenidoRegion deseado[NUM_REGIONES], dibujado[NUM_REGIONES];
 bool regionInvalida[NUM_REGIONES];
 unsigned long dibujoMaxUs = 0;                           // para la prueba P19
@@ -1169,8 +894,7 @@ void calcularVista() {
   // Encabezado
   ContenidoRegion& e = deseado[R_ENCABEZADO];
   e.fondo = C_CABECERA; e.color = C_TEXTO;
-  int clientes = WiFi.softAPgetStationNum();
-  ponerTexto(e.l1, sizeof(e.l1), "Wi-Fi %d · AWS %s", clientes, estadoAWS());
+  ponerTexto(e.l1, sizeof(e.l1), "Wi-Fi %s · AWS %s", awsWifi ? "OK" : "--", estadoAWS());
   ponerTexto(e.l2, sizeof(e.l2), "Pico: %.2f g", magPicoUltimo);
 
   // Estado
@@ -1206,10 +930,10 @@ void calcularVista() {
   calcularSigno(deseado[R_FC], semaforoFC(), fc, hayDedo && fc > 0);
   calcularSigno(deseado[R_SPO2], semaforoSpO2(), spo2, hayDedo && spo2Valida);
 
-  // Sensibilidad (R6)
-  ContenidoRegion& p = deseado[R_SENS];
-  p.fondo = C_FONDO; p.color = C_TEXTO; p.valor = sensibilidadPct;
-  ponerTexto(p.l1, sizeof(p.l1), "Sens. %d%%  Umbral %.2f g", sensibilidadPct, umbralImpactoG);
+  // Umbral de impacto (fijo desde la versión 5)
+  ContenidoRegion& p = deseado[R_UMBRAL];
+  p.fondo = C_FONDO; p.color = C_TEXTO;
+  ponerTexto(p.l1, sizeof(p.l1), "Umbral de impacto: %.2f g", UMBRAL_IMPACTO_G);
 
   // Último evento (dos renglones de 52 caracteres)
   ContenidoRegion& v = deseado[R_EVENTO];
@@ -1264,16 +988,10 @@ void dibujarSigno(int x, const char* titulo, const ContenidoRegion& n, const Con
   }
 }
 
-void dibujarSensibilidad(const ContenidoRegion& n, const ContenidoRegion& v, bool completo) {
+void dibujarUmbral(const ContenidoRegion& n, const ContenidoRegion& v, bool completo) {
   if (completo || strcmp(n.l1, v.l1)) {
-    tft.fillRect(4, 184, 312, 16, n.fondo);
-    texto(8, 184, n.l1, 2, n.color, n.fondo);
-  }
-  if (completo || n.valor != v.valor) {
-    int w = 304 * constrain(n.valor, 0, 100) / 100;
-    int r = 255 * constrain(n.valor, 0, 100) / 100;        // verde (poco sensible) -> rojo (muy sensible)
-    tft.fillRect(8, 204, w, 10, rgb565(r, 255 - r, 0));
-    tft.fillRect(8 + w, 204, 304 - w, 10, C_TARJETA);
+    tft.fillRect(4, 188, 312, 20, n.fondo);
+    textoCentrado(160, 190, n.l1, 2, n.color, n.fondo);
   }
 }
 
@@ -1295,7 +1013,7 @@ void dibujarRegion(int i) {
     case R_ESTADO:     dibujarEstado(n, v, completo); break;
     case R_FC:         dibujarSigno(4,   "FC (lpm)", n, v, completo); break;
     case R_SPO2:       dibujarSigno(162, "SpO2 (%)", n, v, completo); break;
-    case R_SENS:       dibujarSensibilidad(n, v, completo); break;
+    case R_UMBRAL:     dibujarUmbral(n, v, completo); break;
     case R_EVENTO:     dibujarEvento(n, v, completo); break;
   }
   dibujado[i] = n;
@@ -1358,50 +1076,6 @@ void mostrarInterfaz() {
   calcularVista();
 }
 
-// ----------------------------------------------------------------------------
-// Servidor web
-// ----------------------------------------------------------------------------
-void enviarDatos() {
-  String j;
-  j.reserve(2200);
-  j += "{\"estado\":\""; j += nombreEstado();
-  j += "\",\"panico\":"; j += alarmaPorPanico ? "true" : "false";
-  j += ",\"sonido\":";   j += alarmaSonando() ? "true" : "false";
-  j += ",\"restante\":"; j += segundosRestantes();
-  j += ",\"dedo\":";     j += hayDedo ? "true" : "false";
-  j += ",\"fc\":";       j += hayDedo ? fc : 0;
-  j += ",\"spo2\":";     j += (hayDedo && spo2Valida) ? spo2 : 0;
-  j += ",\"semFC\":\"";  j += semaforoFC();
-  j += "\",\"semSp\":\""; j += semaforoSpO2();
-  j += "\",\"ir\":";     j += ultimoIR;
-  j += ",\"mag\":";      j += String(magnitudG, 2);
-  j += ",\"magPico\":";  j += String(magPicoUltimo, 2);
-  j += ",\"sens\":";     j += sensibilidadPct;
-  j += ",\"umbral\":";   j += String(umbralImpactoG, 2);
-  j += ",\"sensores\":\"MPU6050: "; j += mpuOK ? "OK" : "sin respuesta";
-  j += " · MAX30102: ";  j += oximetroOK ? "OK" : "sin respuesta";
-  j += "\",\"ahora\":";  j += millis();
-  j += ",\"eventos\":[";
-  for (int i = 0; i < numEventos; i++) {
-    int k = (idxEvento - 1 - i + MAX_EVENTOS) % MAX_EVENTOS;
-    if (i) j += ",";
-    j += "{\"t\":"; j += eventos[k].t; j += ",\"m\":\""; j += eventos[k].msg; j += "\"}";
-  }
-  j += "]}";
-  server.send(200, "application/json; charset=utf-8", j);
-}
-
-void configurarServidor() {
-  server.on("/", HTTP_GET, []() { server.send_P(200, "text/html; charset=utf-8", PAGINA); });
-  server.on("/datos", HTTP_GET, enviarDatos);
-  server.on("/silenciar", HTTP_POST, []() {               // R7
-    silenciar(true);
-    server.send(200, "application/json", "{\"ok\":true}");
-  });
-  server.onNotFound([]() { server.send(404, "text/plain", "No encontrado"); });
-  server.begin();
-}
-
 // Resumen por el Monitor Serie cada 2 s (para las pruebas)
 unsigned long cicloMaxUs = 0;
 
@@ -1409,12 +1083,12 @@ void imprimirResumen() {
   static unsigned long t = 0;
   if (millis() - t < 2000) return;
   t = millis();
-  Serial.printf("[%lu ms] %s | FC %s | SpO2 %s | dedo %s (IR %lu) | |a| %.2f g | sens %d %% (umbral %.2f g) | clientes Wi-Fi %d | TFT max %.1f ms | ciclo max %.1f ms\n",
+  Serial.printf("[%lu ms] %s | FC %s | SpO2 %s | dedo %s (IR %lu) | |a| %.2f g | umbral %.2f g | TFT max %.1f ms | ciclo max %.1f ms\n",
                 millis(), nombreEstado(),
                 fc > 0 ? String(fc).c_str() : "--",
                 (hayDedo && spo2Valida) ? String(spo2).c_str() : "--",
                 hayDedo ? "SI" : "NO", (unsigned long)ultimoIR,
-                magnitudG, sensibilidadPct, umbralImpactoG, WiFi.softAPgetStationNum(),
+                magnitudG, UMBRAL_IMPACTO_G,
                 dibujoMaxUs / 1000.0, cicloMaxUs / 1000.0);
   Serial.printf("            AWS: wifi %s | mqtt %s | captura %s (%lu muestras) | lotes enviados %lu | descartadas %lu | intentos %lu | heap %u\n",
                 awsWifi ? "OK" : "--", awsConectado ? "OK" : "--", capturando ? "SI" : "NO",
@@ -1431,14 +1105,10 @@ void imprimirResumen() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n===== PulsoSeguro (versión 4: pantalla TFT + AWS IoT) =====");
+  Serial.println("\n===== PulsoSeguro (versión 5: pantalla TFT + AWS IoT, sin AP) =====");
 
   pinMode(PIN_BOTON, INPUT_PULLUP);
-  analogReadResolution(12);
 
-  ledcAttach(PIN_LED_R, 5000, 8);
-  ledcAttach(PIN_LED_G, 5000, 8);
-  ledcAttach(PIN_LED_B, 5000, 8);
   if (BUZZER_PASIVO) ledcAttach(PIN_BUZZER, 2000, 8);
   else pinMode(PIN_BUZZER, OUTPUT);
   buzzerTono(0);
@@ -1451,24 +1121,15 @@ void setup() {
   oximetroOK = iniciarOximetro();
   Serial.printf("MPU6050: %s | MAX30102: %s\n", mpuOK ? "OK" : "ERROR", oximetroOK ? "OK" : "ERROR");
 
-  WiFi.mode(WIFI_AP_STA);                                // AP para el dashboard + STA para AWS
-  WiFi.softAP(AP_SSID, AP_PASSWORD);
-  Serial.printf("Red Wi-Fi: %s | contraseña: %s | abrir http://", AP_SSID, AP_PASSWORD);
-  Serial.println(WiFi.softAPIP());
+  WiFi.mode(WIFI_STA);                                   // solo estación: red con internet para AWS
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);                      // no bloquea: la tarea AWS espera la conexión
   Serial.printf("Conectando a la red con internet \"%s\" para AWS IoT\n", WIFI_SSID);
-  configurarServidor();
   iniciarAWS();
 
-  // Autoprueba: rojo, verde, azul y un pitido
-  ledColor(255, 0, 0); delay(250);
-  ledColor(0, 255, 0); delay(250);
-  ledColor(0, 0, 255); delay(250);
-  ledColor(0, 0, 0);
+  // Autoprueba: un pitido
   buzzerTono(2000); delay(120); buzzerTono(0);
 
-  potFiltrado = analogRead(PIN_POT);
   registrarEvento("Sistema iniciado");
   cambiarEstado(NORMAL);
   mostrarInterfaz();
@@ -1480,13 +1141,10 @@ void loop() {
   if (tPrev && us - tPrev > cicloMaxUs) cicloMaxUs = us - tPrev;   // duración de la vuelta anterior
   tPrev = us;
 
-  server.handleClient();       // dashboard
   leerOximetro();              // MAX30102 (R3)
   detectarCaida();             // MPU6050 (R1)
   leerBoton();                 // R4, R5
-  leerPotenciometro();         // R6
   actualizarEstados();         // R2 y espera de 10 s
-  actualizarLED();
   actualizarBuzzer();
   actualizarPantalla();        // TFT: una región por vuelta, como máximo
   procesarComandosAWS();       // start / stop recibidos por MQTT
