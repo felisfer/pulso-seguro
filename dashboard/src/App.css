@@ -216,30 +216,40 @@
   min-height: 2.86rem;
 }
 
+/* Cada estado define su tono (--tono*) y la tarjeta entera se tiñe con él:
+   verde = normal, naranja = levemente fuera del promedio, rojo = fuera de rango. */
+.tarjeta-estado {
+  --tono: var(--neutro);
+  --tono-texto: var(--texto-3);
+  --tono-fondo: var(--superficie);
+  border-color: color-mix(in srgb, var(--tono) 40%, var(--borde));
+  border-left-color: var(--tono);
+  background: var(--tono-fondo);
+  transition:
+    background-color 0.4s,
+    border-color 0.4s;
+}
 .tarjeta-estado.estado-bien {
-  border-left-color: var(--bien);
+  --tono: var(--bien);
+  --tono-texto: var(--bien-texto);
+  --tono-fondo: var(--bien-fondo);
 }
-.tarjeta-estado.estado-bien .estado-valor {
-  color: var(--bien-texto);
-}
-.tarjeta-estado.estado-aviso {
-  border-left-color: var(--aviso);
-}
-.tarjeta-estado.estado-aviso .estado-valor {
-  color: var(--aviso-texto);
+.tarjeta-estado.estado-precaucion {
+  --tono: var(--naranja);
+  --tono-texto: var(--naranja-texto);
+  --tono-fondo: var(--naranja-fondo);
 }
 .tarjeta-estado.estado-critico {
-  border-left-color: var(--critico);
-  background: var(--critico-fondo);
+  --tono: var(--critico);
+  --tono-texto: var(--critico-texto);
+  --tono-fondo: var(--critico-fondo);
 }
-.tarjeta-estado.estado-critico .estado-valor {
-  color: var(--critico-texto);
+.tarjeta-estado .estado-valor,
+.tarjeta-estado .tarjeta-titulo {
+  color: var(--tono-texto);
 }
-.tarjeta-estado.estado-neutro {
-  border-left-color: var(--neutro);
-}
-.tarjeta-estado.estado-neutro .estado-valor {
-  color: var(--texto-3);
+.tarjeta-estado .tarjeta-pie {
+  color: color-mix(in srgb, var(--tono-texto) 70%, var(--texto-2));
 }
 
 /* ---------- Barra de estado e insignias ---------- */

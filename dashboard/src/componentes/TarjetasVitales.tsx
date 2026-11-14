@@ -8,8 +8,13 @@ const VITALS_VIEJOS_MS = 5000
 
 const SEMAFORO: Record<Semaforo, { texto: string; detalle: string; clase: string; icono: ReactNode }> = {
   verde: { texto: "Normal", detalle: "Signos vitales en rango", clase: "estado-bien", icono: <IconoOk tam={22} /> },
-  amarillo: { texto: "Precaución", detalle: "Valores cerca del límite", clase: "estado-aviso", icono: <IconoAlerta tam={22} /> },
-  rojo: { texto: "Alerta", detalle: "Signos vitales fuera de rango", clase: "estado-critico", icono: <IconoAlerta tam={22} /> },
+  amarillo: {
+    texto: "Precaución",
+    detalle: "FC o SpO₂ levemente fuera del promedio",
+    clase: "estado-precaucion",
+    icono: <IconoAlerta tam={22} />,
+  },
+  rojo: { texto: "Alerta", detalle: "FC o SpO₂ fuera de rango", clase: "estado-critico", icono: <IconoAlerta tam={22} /> },
 }
 
 interface Props {
