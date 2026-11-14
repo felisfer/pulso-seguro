@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  PulsoSeguro - prediccion de FC a +10 s. IoT Rule (bio/+/features) -> Lambda (Ridge en JSON)
+  -> DynamoDB (predicciones + FC real a +10 s) y MQTT bio/<thing>/pred.
+
+Parameters:
+  ModeloBucket:
+    Type: String
+    Description: Bucket S3 donde vive modelos/modelo_fc.json (puede ser el mismo del dataset)
+  ModeloLlave:
+    Type: String
+    Default: modelos/modelo_fc.json
+  IotEndpoint:
+    Type: String
+    Description: Endpoint de datos ATS SIN https:// (aws iot describe-endpoint --endpoint-type iot:Data-ATS)
+    AllowedPattern: "^[a-z0-9]+-ats\\.iot\\.[a-z0-9-]+\\.amazonaws\\.com$"
+  NombreTabla:
+    Type: String
+    Default: pulsoseguro_predicciones
+  TtlDias:
+    Type: Number
+    Default: 30
+  UmbralAmarillo:
+    Type: Number
+    Default: 120
+  ArchivarFeatures:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Guarda tambien cada mensaje de features en S3 (features/...) para validar la paridad con datos reales
+
+Conditions:
+  Archivar: !Equals [!Ref ArchivarFeatures, "true"]
+
+Resources:
+  # ------------------------------------------------------------- DynamoDB
+  # Modo APROVISIONADO: el modo on-demand no entra en la capa siempre gratuita (25 WCU/RCU).
+  # Cada pulsera escribe ~1 WCU/s (1 put + 1 update cada 2 s, items < 1 KB).
+  TablaPredicciones:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Ref NombreTabla
+      BillingMode: PROVISIONED
+      ProvisionedThroughput: { ReadCapacityUnits: 5, WriteCapacityUnits: 5 }
+      AttributeDefinitions:
+        - { AttributeName: dispositivo, AttributeType: S }
+        - { AttributeName: ts, AttributeType: N }
+      KeySchema:
+        - { AttributeName: dispositivo, KeyType: HASH }
+        - { AttributeName: ts, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: expira, Enabled: true }
+
+  # ------------------------------------------------------------- Lambda
+  LogsLambda:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/pulsoseguro-prediccion
+      RetentionInDays: 14
+
+  RolLambda:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: minimo-privilegio
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${LogsLambda.Arn}"
+              - Effect: Allow
+                Action: s3:GetObject           # tambien cubre HeadObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${ModeloBucket}/${ModeloLlave}"
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:Query, dynamodb:UpdateItem]
+                Resource: !GetAtt TablaPredicciones.Arn
+              - Effect: Allow
+                Action: iot:Publish
+                Resource: !Sub "arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/bio/*/pred"
+
+  FuncionPrediccion:
+    Type: AWS::Lambda::Function
+    DependsOn: LogsLambda
+    Properties:
+      FunctionName: pulsoseguro-prediccion
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: lambda_function.lambda_handler
+      Code: ../lambda/src            # 'aws cloudformation package' lo sube a S3
+      MemorySize: 128
+      Timeout: 10
+      Role: !GetAtt RolLambda.Arn
+      Environment:
+        Variables:
+          TABLA: !Ref TablaPredicciones
+          MODELO_BUCKET: !Ref ModeloBucket
+          MODELO_LLAVE: !Ref ModeloLlave
+          IOT_ENDPOINT: !Sub "https://${IotEndpoint}"
+          TTL_DIAS: !Ref TtlDias
+          UMBRAL_AMARILLO: !Ref UmbralAmarillo
+
+  # ------------------------------------------------------------- IoT Rule
+  LogsErroresRegla:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /pulsoseguro/errores-regla
+      RetentionInDays: 14
+
+  RolIot:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: iot.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition: { StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" } }
+      Policies:
+        - PolicyName: errores-y-archivo
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !GetAtt LogsErroresRegla.Arn
+              - !If
+                - Archivar
+                - Effect: Allow
+                  Action: s3:PutObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${ModeloBucket}/features/*"
+                - !Ref AWS::NoValue
+
+  ReglaFeatures:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: bio_features_pred
+      TopicRulePayload:
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        Sql: "SELECT *, topic(2) AS thing, timestamp() AS ts FROM 'bio/+/features'"
+        Actions:
+          - Lambda: { FunctionArn: !GetAtt FuncionPrediccion.Arn }
+          - !If
+            - Archivar
+            - S3:
+                BucketName: !Ref ModeloBucket
+                RoleArn: !GetAtt RolIot.Arn
+                Key: "features/${topic(2)}/${parse_time('yyyy/MM/dd/HH', timestamp(), 'UTC')}/${timestamp()}.json"
+            - !Ref AWS::NoValue
+        ErrorAction:
+          CloudwatchLogs:
+            LogGroupName: !Ref LogsErroresRegla
+            RoleArn: !GetAtt RolIot.Arn
+
+  PermisoIotInvoca:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FuncionPrediccion
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt ReglaFeatures.Arn
+
+Outputs:
+  Tabla:
+    Value: !Ref TablaPredicciones
+  Funcion:
+    Value: !Ref FuncionPrediccion
+  Regla:
+    Value: !Ref ReglaFeatures
