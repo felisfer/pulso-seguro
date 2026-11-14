@@ -3,12 +3,12 @@ import { IconoAlerta, IconoCaida } from "./Iconos"
 
 const TEXTOS = {
   caida: {
-    titulo: "Caída detectada",
-    detalle: "La persona tiene 15 s para cancelarla con el botón; después suena la alarma completa.",
+    titulo: "Fall detected",
+    detalle: "The person has 15 s to cancel it with the button; after that the full alarm sounds.",
   },
   panico: {
-    titulo: "Botón de pánico activado",
-    detalle: "La persona pidió ayuda manteniendo el botón 3 s. La alarma sigue activa hasta que se silencie en la pulsera.",
+    titulo: "Panic button pressed",
+    detalle: "The person asked for help by holding the button for 3 s. The alarm stays active until it is silenced on the wristband.",
   },
 } as const
 
@@ -22,7 +22,7 @@ export function AlertaCaida({ inicio, tipo = "caida" }: { inicio: number | null;
       <div>
         <strong>{titulo}</strong>
         <p>
-          Reportada por la pulsera ({horaConSegundos(inicio)}). {detalle}
+          Reported by the wristband ({horaConSegundos(inicio)}). {detalle}
         </p>
       </div>
     </div>

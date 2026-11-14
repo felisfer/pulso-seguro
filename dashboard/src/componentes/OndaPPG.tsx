@@ -82,7 +82,7 @@ export function OndaPPG({ muestras, alto: altoFijo }: Props) {
         ref={lienzo}
         style={{ width: ancho, height: alto }}
         role="img"
-        aria-label="Onda de pulso (PPG, canal infrarrojo) de los últimos 6 segundos"
+        aria-label="Pulse wave (PPG, infrared channel) over the last 6 seconds"
       />
     </div>
   )

@@ -41,12 +41,12 @@ export function Tablero({ usuario, idToken, onSalir }: Props) {
           <span className="marca-logo" aria-hidden="true">
             <IconoCorazon tam={20} />
           </span>
-          <span>PulsoSeguro</span>
+          <span>HealthyBeats</span>
         </div>
 
         {config.things.length > 1 ? (
           <label className="selector-thing">
-            <span className="solo-lector">Pulsera</span>
+            <span className="solo-lector">Wristband</span>
             <select value={thing} onChange={e => elegir(e.target.value)}>
               {config.things.map(t => (
                 <option key={t} value={t}>
@@ -63,7 +63,7 @@ export function Tablero({ usuario, idToken, onSalir }: Props) {
           {usuario && <span className="usuario-email">{usuario}</span>}
           {onSalir && (
             <button type="button" className="boton boton-texto-icono" onClick={onSalir}>
-              <IconoSalir /> Salir
+              <IconoSalir /> Sign out
             </button>
           )}
         </div>
@@ -72,10 +72,10 @@ export function Tablero({ usuario, idToken, onSalir }: Props) {
       <main className="contenido">
         {faltan.length > 0 ? (
           <div className="aviso aviso-error" role="alert">
-            <strong>Falta configuración para conectarse a AWS IoT:</strong>{" "}
-            {faltan.join(", ")}. Agrégalas (ver <code>.env.example</code>) a <code>.env</code> en desarrollo o a{" "}
-            <code>.env.production</code> en Docker y vuelve a compilar, o usa{" "}
-            <code>VITE_DEMO=true</code> para ver la interfaz con datos simulados.
+            <strong>Missing configuration to connect to AWS IoT:</strong>{" "}
+            {faltan.join(", ")}. Add them (see <code>.env.example</code>) to <code>.env</code> in development or to{" "}
+            <code>.env.production</code> in Docker and rebuild, or use{" "}
+            <code>VITE_DEMO=true</code> to see the interface with simulated data.
           </div>
         ) : (
           <Monitor key={thing} thing={thing} idToken={idToken} usuario={usuario} />

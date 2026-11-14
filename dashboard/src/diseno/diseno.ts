@@ -22,15 +22,15 @@ export type IdPanel =
   | "historial"
 
 export const NOMBRES_PANEL: Record<IdPanel, string> = {
-  estado: "Estado general",
-  fc: "Frecuencia cardiaca",
+  estado: "Overall status",
+  fc: "Heart rate",
   spo2: "SpO₂",
   sensor: "Sensor",
-  tendencias: "Tendencias en vivo",
-  eventos: "Eventos recientes",
-  ppg: "Onda de pulso",
-  captura: "Sesión de captura",
-  historial: "Historial de predicciones",
+  tendencias: "Live trends",
+  eventos: "Recent events",
+  ppg: "Pulse wave",
+  captura: "Capture session",
+  historial: "Prediction history",
 }
 
 const TARJETAS: IdPanel[] = ["estado", "fc", "spo2", "sensor"]

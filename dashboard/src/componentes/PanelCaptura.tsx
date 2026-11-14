@@ -3,6 +3,14 @@ import type { Cmd } from "../tipos"
 import { idSesion } from "../utilidades/tiempo"
 
 const ETIQUETAS = ["reposo", "caminar", "correr", "escaleras", "transicion"]
+// Los valores se envían tal cual (dataset y modelo); el label solo traduce la sugerencia en pantalla.
+const ETIQUETAS_EN: Record<string, string> = {
+  reposo: "rest",
+  caminar: "walk",
+  correr: "run",
+  escaleras: "stairs",
+  transicion: "transition",
+}
 
 interface Props {
   conectado: boolean
@@ -74,51 +82,51 @@ export function PanelCaptura({ conectado, publicar, ahora }: Props) {
 
   return (
     <section className="panel" aria-labelledby="titulo-captura">
-      <h2 id="titulo-captura" className="panel-titulo">Sesión de captura</h2>
+      <h2 id="titulo-captura" className="panel-titulo">Capture session</h2>
       {grabacion ? (
         <div className="grabando">
           <p>
-            <span className="punto-grabando" aria-hidden="true" /> Grabando <strong>{grabacion.label}</strong> · sesión{" "}
+            <span className="punto-grabando" aria-hidden="true" /> Recording <strong>{grabacion.label}</strong> · session{" "}
             <code>{grabacion.sesion}</code>
           </p>
           <p className="tarjeta-pie">
-            {transcurrido} s{grabacion.fin ? ` de ${Math.round((grabacion.fin - grabacion.inicio) / 1000)} s` : ""} · el
-            stop se envía desde esta pestaña; no la cierres.
+            {transcurrido} s{grabacion.fin ? ` of ${Math.round((grabacion.fin - grabacion.inicio) / 1000)} s` : ""} · the
+            stop is sent from this tab; do not close it.
           </p>
           <button type="button" className="boton boton-peligro" onClick={() => void detener()} disabled={enviando}>
-            Detener (stop)
+            Stop
           </button>
         </div>
       ) : (
         <form className="formulario" onSubmit={e => void iniciar(e)}>
           <label>
-            Actividad
+            Activity
             <input list="etiquetas" value={label} onChange={e => setLabel(e.target.value)} required />
             <datalist id="etiquetas">
               {ETIQUETAS.map(l => (
-                <option key={l} value={l} />
+                <option key={l} value={l} label={ETIQUETAS_EN[l]} />
               ))}
             </datalist>
           </label>
           <label>
-            Sujeto
-            <input value={sujeto} onChange={e => setSujeto(e.target.value)} pattern="[A-Za-z0-9_-]+" required title="Identificador anónimo, p. ej. s01" />
+            Subject
+            <input value={sujeto} onChange={e => setSujeto(e.target.value)} pattern="[A-Za-z0-9_-]+" required title="Anonymous ID, e.g. s01" />
           </label>
           <label>
-            Duración (s)
+            Duration (s)
             <input type="number" min={0} max={3600} value={duracion} onChange={e => setDuracion(Number(e.target.value))} />
           </label>
           <button type="submit" className="boton boton-primario" disabled={!conectado || enviando}>
-            Iniciar (start)
+            Start
           </button>
           <p className="tarjeta-pie formulario-nota">
-            Usa identificadores anónimos (s01), nunca nombres. Duración 0 = hasta pulsar «Detener».
+            Use anonymous IDs (s01), never names. Duration 0 = until you press “Stop”.
           </p>
         </form>
       )}
       {error && (
         <p className="error-linea" role="alert">
-          No se pudo enviar el comando: {error}
+          Could not send the command: {error}
         </p>
       )}
     </section>
