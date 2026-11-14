@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import type { VitalsRecibidos } from "../telemetria/estado"
 import type { Prediccion, Semaforo } from "../tipos"
 import { haceCuanto } from "../utilidades/tiempo"
+import { CorazonLatiendo } from "./CorazonLatiendo"
 import { IconoAlerta, IconoCorazon, IconoGota, IconoInfo, IconoMano, IconoOk } from "./Iconos"
 
 const VITALS_VIEJOS_MS = 5000
@@ -44,7 +45,7 @@ export function TarjetasVitales({ vitals, pred, ahora }: Props) {
         <p className="tarjeta-pie">{sem ? sem.detalle : pie}</p>
       </article>
 
-      <article className={`tarjeta ${viejo ? "vieja" : ""}`}>
+      <article className={`tarjeta tarjeta-ilustrada ${viejo ? "vieja" : ""}`}>
         <h2 className="tarjeta-titulo">
           <IconoCorazon /> Frecuencia cardiaca
         </h2>
@@ -52,6 +53,9 @@ export function TarjetasVitales({ vitals, pred, ahora }: Props) {
           <span className="numero">{vitals?.fc ?? "—"}</span>
           <span className="unidad">lpm</span>
         </p>
+        <div className="tarjeta-ilustracion">
+          <CorazonLatiendo fc={viejo ? null : (vitals?.fc ?? null)} />
+        </div>
         <p className="tarjeta-pie">
           {predVigente ? (
             <>

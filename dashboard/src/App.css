@@ -259,6 +259,110 @@
   gap: 8px;
 }
 
+/* Tarjeta con ilustración animada a la derecha (corazón, burbujas). */
+.tarjeta-ilustrada {
+  position: relative;
+  padding-right: 96px;
+}
+
+.tarjeta-ilustracion {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+}
+
+/* ---------- Corazón latiendo ---------- */
+.corazon {
+  --duracion-latido: 1000ms;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.corazon-svg {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 3px 6px rgb(196 45 45 / 0.35));
+  transform-origin: 50% 60%;
+}
+
+.corazon-onda {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  border: 2px solid var(--critico);
+  opacity: 0;
+}
+
+.corazon.latiendo .corazon-svg {
+  animation: latido var(--duracion-latido) ease-in-out infinite;
+}
+
+.corazon.latiendo .corazon-onda {
+  animation: onda-latido var(--duracion-latido) ease-out infinite;
+}
+
+.corazon.detenido {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+/* "Lub-dub": dos contracciones seguidas y un reposo. */
+@keyframes latido {
+  0%,
+  45%,
+  100% {
+    transform: scale(1);
+  }
+  12% {
+    transform: scale(1.16);
+  }
+  24% {
+    transform: scale(0.98);
+  }
+  34% {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes onda-latido {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.55;
+  }
+  60%,
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+/* Con "reducir movimiento" (p. ej. Windows con los efectos de animación apagados) no hay
+   cambio de tamaño ni onda: el corazón solo cambia de brillo al mismo ritmo. */
+@keyframes latido-suave {
+  0%,
+  45%,
+  100% {
+    opacity: 1;
+  }
+  15% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .corazon.latiendo .corazon-svg {
+    animation: latido-suave var(--duracion-latido) ease-in-out infinite;
+  }
+  .corazon.latiendo .corazon-onda {
+    animation: none;
+  }
+}
+
 /* ---------- Barra de estado e insignias ---------- */
 .barra-estado {
   display: flex;
