@@ -1,6 +1,6 @@
 # PulsoSeguro
 
-Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO₂** con un MAX30102 y **detecta caídas** con un MPU6050. Muestra los datos en una pantalla TFT y envía las señales crudas a **AWS IoT Core → S3** para entrenar un modelo de **predicción de FC** en Python.
+Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO₂** con un MAX30102 y **detecta caídas** con un MPU6050. Muestra los datos en una pantalla TFT, envía las señales crudas a **AWS IoT Core → S3** para entrenar un modelo de **predicción de FC** en Python y tiene un **dashboard web** en React para ver la pulsera en vivo.
 
 ## Estado del proyecto
 
@@ -13,6 +13,9 @@ Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO�
 | FC de referencia a partir del PPG | ✅ 93-100 % de ventanas válidas en reposo |
 | Modelo de predicción de FC (+10 s) | 🟡 Pipeline listo; **todavía no supera a la línea base** por falta de datos ([resultados](#resultados-actuales)) |
 | FC durante movimiento (filtrado de artefactos con el acelerómetro) | ⏳ Pendiente |
+| Dashboard web (React): login con Cognito, monitor en vivo, diseño editable | ✅ Funcional en modo demo; ⏳ falta conectarlo a AWS IoT ([pasos](#configuración-de-aws-para-el-dashboard)) |
+| Tópico `vitals` (FC, SpO₂, caída y semáforo a 1 Hz) en el firmware | ⏳ Pendiente |
+| Lambda de predicción en vivo (`pred` + DynamoDB + API del historial) | ⏳ Planeado |
 
 ## Contenido
 
@@ -23,6 +26,7 @@ Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO�
 - [Configuración de AWS IoT Core](#configuración-de-aws-iot-core)
 - [Herramientas en Python](#herramientas-en-python)
 - [Modelo de predicción de FC](#modelo-de-predicción-de-fc)
+- [Dashboard web](#dashboard-web)
 - [Costos](#costos)
 - [Solución de problemas](#solución-de-problemas)
 - [Seguridad](#seguridad)
@@ -50,16 +54,28 @@ flowchart TB
     end
     PC["PC · control.py<br/>start / stop + etiqueta"]
     ML["cargar_s3.py → dataset.csv<br/>modelo_fc.py"]
+    Web["Dashboard web · React<br/>navegador"]
+    Cog["Cognito<br/>User Pool + Identity Pool"]
+    Pred["Lambda de predicción<br/>+ DynamoDB (planeado)"]
 
-    N0 -- "bio/thing/data" --> IoT
+    N0 -- "bio/thing/data · status" --> IoT
+    N0 -. "bio/thing/vitals (pendiente)" .-> IoT
     IoT -- "bio/thing/cmd" --> N0
     PC -- "cmd" --> IoT
     S3 --> ML
+    Web -- "login → credenciales temporales" --> Cog
+    IoT -- "MQTT/WSS: status · vitals · pred · data" --> Web
+    Web -- "cmd (opcional)" --> IoT
+    Pred -. "bio/thing/pred" .-> IoT
+    Pred -. "historial (API)" .-> Web
 ```
+
+Las líneas punteadas son partes que todavía no existen.
 
 - **Wi-Fi solo en modo estación (STA).** El ESP32 se conecta a un router con internet para llegar a AWS. Desde la versión 5 ya no crea su propia red ni sirve el dashboard web: la información local se ve en la pantalla TFT.
 - **Dos núcleos.** Una reconexión TLS bloquea de 1 a 3 s, y la detección de caídas lee el MPU6050 cada 10 ms. Por eso MQTT corre en una tarea de FreeRTOS en el núcleo 0, y la lógica de la pulsera nunca espera a la red.
 - **El broker no guarda datos.** Una Rule de IoT Core escribe cada lote como un archivo en S3, sin servicios intermedios.
+- **El dashboard no tiene backend propio.** El navegador se conecta directo a IoT Core con credenciales temporales de Cognito; nunca usa los certificados del ESP32.
 
 ## Hardware
 
@@ -139,6 +155,8 @@ La pantalla muestra el estado y su cuenta regresiva, la FC y la SpO₂ con el co
 | `bio/<THING_NAME>/data` | ESP32 | Lotes CSV de ~10 KB (~1.5 s de señal) |
 | `bio/<THING_NAME>/cmd` | PC (`control.py`) | `{"cmd":"start","sesion":…,"label":…,"sujeto":…}` o `{"cmd":"stop"}` |
 | `bio/<THING_NAME>/status` | ESP32 (y AWS como Last Will) | `online` / `offline`, retenido |
+| `bio/<THING_NAME>/vitals` | ESP32 (**pendiente**) | JSON a 1 Hz con FC, SpO₂, contacto, caída y semáforo ([formato](#tópicos-que-usa-el-dashboard)) |
+| `bio/<THING_NAME>/pred` | Lambda (**planeado**) | JSON cada 2 s con la FC predicha ([formato](#tópicos-que-usa-el-dashboard)) |
 
 ### Formato de cada lote
 
@@ -161,7 +179,7 @@ seq,t_ms,red,ir,ax,ay,az,gx,gy,gz
 
 ## Configuración de AWS IoT Core
 
-Se usa la región `us-east-1`. Todo cabe en el plan gratuito; ver [Costos](#costos).
+Todo el proyecto usa la región **`us-east-2`** (Cognito, IoT Core, S3 y lo que se agregue). Todo cabe en el plan gratuito; ver [Costos](#costos).
 
 1. **Política IoT `bio-policy`.** Reemplaza `<ACCOUNT_ID>` en los tres recursos. El `Subscribe` usa `topicfilter/`, no `topic/`.
 
@@ -170,11 +188,11 @@ Se usa la región `us-east-1`. Todo cabe en el plan gratuito; ver [Costos](#cost
      "Version": "2012-10-17",
      "Statement": [
        { "Effect": "Allow", "Action": "iot:Connect",
-         "Resource": "arn:aws:iot:us-east-1:<ACCOUNT_ID>:client/${iot:Connection.Thing.ThingName}" },
+         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:client/${iot:Connection.Thing.ThingName}" },
        { "Effect": "Allow", "Action": ["iot:Publish", "iot:Receive", "iot:RetainPublish"],
-         "Resource": "arn:aws:iot:us-east-1:<ACCOUNT_ID>:topic/bio/*" },
+         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/bio/*" },
        { "Effect": "Allow", "Action": "iot:Subscribe",
-         "Resource": "arn:aws:iot:us-east-1:<ACCOUNT_ID>:topicfilter/bio/*" }
+         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/bio/*" }
      ]
    }
    ```
@@ -235,7 +253,7 @@ Los scripts leen los datos de tu cuenta de variables de entorno, para no dejarlo
 
 ```powershell
 # PowerShell
-$env:AWS_IOT_ENDPOINT = "abc123xyz-ats.iot.us-east-1.amazonaws.com"
+$env:AWS_IOT_ENDPOINT = "abc123xyz-ats.iot.us-east-2.amazonaws.com"
 $env:AWS_IOT_DEVICE   = "esp32s3-01"
 $env:AWS_IOT_CA_CERTS = "certs/AmazonRootCA1.pem"
 $env:AWS_IOT_CERTFILE = "certs/pc-captura.cert.pem"
@@ -306,12 +324,165 @@ Primer dataset real (10/11/2026): 1 sujeto, 5 sesiones de 60 s, una sola activid
 - Sostener el sensor con el dedo mientras te mueves no funciona: la mayoría de las ventanas sale irregular. El sensor necesita ir fijo al cuerpo, con presión constante.
 - La FC medida en la sesión «correr» (75-82 lpm) está en rango de reposo. Hay que confirmar si el esfuerzo realmente subió la FC o si lo que domina la señal es el braceo.
 
+## Dashboard web
+
+`dashboard/` es una aplicación de una sola página en **React 19 + TypeScript + Vite**. El usuario inicia sesión con **Cognito** y el navegador recibe los datos de la pulsera de **AWS IoT Core por MQTT sobre WebSocket**. Mientras no existan los tópicos `vitals` y `pred`, el **modo demo** simula los mismos mensajes en el navegador.
+
+### Qué muestra
+
+| Panel | Contenido | Fuente |
+|---|---|---|
+| Estado general | Semáforo que decide el ESP32: **verde** normal, **naranja** levemente fuera del promedio, **rojo** fuera de rango. Toda la tarjeta se tiñe | `vitals.semaforo` |
+| Frecuencia cardiaca | Valor, predicción a +10 s y un **corazón que late** a 60/FC s por latido | `vitals.fc`, `pred` |
+| SpO₂ | Valor y **burbujas que suben** a la superficie (oxigenación) | `vitals.spo2` |
+| Sensor | Verde con contacto, rojo sin contacto | `vitals.dedo` |
+| Aviso de caída | Banda roja mientras dure la caída, con la hora en que empezó | `vitals.caida` |
+| Tendencias en vivo | FC medida contra FC predicha (cada predicción se dibuja en el instante que predice) y SpO₂, en ventanas de 1, 5 o 10 min | Historial en memoria de `vitals` y `pred` |
+| Eventos recientes | Caída, semáforo en rojo, pérdida de contacto, pulsera conectada o desconectada | Calculado en el navegador |
+| Onda de pulso (PPG) | Canal IR de los últimos 6 s y muestras perdidas. **Apagada por defecto** por costo | `data` |
+| Sesión de captura | Equivalente web de `control.py`: `start` con actividad, sujeto y duración, y `stop`. Solo con `VITE_ENABLE_CMD=true` | Publica en `cmd` |
+| Historial de predicciones | FC predicha de la última 1, 6 o 24 h. Solo con `VITE_HISTORY_API_URL` | API → DynamoDB |
+
+- **Diseño editable.** «Editar diseño» permite mover y redimensionar cada tarjeta y panel. El contenido se adapta al tamaño (texto, ilustraciones y gráficas). El diseño se guarda en el navegador por usuario y «Restablecer diseño» vuelve al original. En móvil se usa una sola columna fija.
+- **Accesibilidad.** Tema claro y oscuro automático; los colores de estado siempre van con ícono y texto; las gráficas tienen tooltip y vista de tabla. Si el sistema pide *reducir movimiento* (en Windows, *Efectos de animación* apagados), el corazón y las burbujas solo cambian de brillo.
+- **Varias pulseras.** Con más de un nombre en `VITE_THING_NAMES` aparece un selector en el encabezado.
+
+### Tópicos que usa el dashboard
+
+| Tópico | El dashboard… | Formato |
+|---|---|---|
+| `bio/<thing>/status` | se suscribe | Texto `online` / `offline`, retenido |
+| `bio/<thing>/vitals` | se suscribe | JSON a 1 Hz |
+| `bio/<thing>/pred` | se suscribe | JSON cada 2 s |
+| `bio/<thing>/data` | se suscribe solo si se activa «Recibir señal cruda» | CSV de ~10 KB ([formato](#formato-de-cada-lote)) |
+| `bio/<thing>/cmd` | publica (opcional) | `{"cmd":"start","sesion":…,"label":…,"sujeto":…}` o `{"cmd":"stop"}` |
+
+```jsonc
+// bio/<thing>/vitals: el ESP32 decide el semáforo; el dashboard no recalcula umbrales
+{ "ts": 1763086800000, "fc": 78, "spo2": 97, "dedo": true, "caida": false, "semaforo": "verde" }
+
+// bio/<thing>/pred: la Lambda lo publica y también lo guarda en DynamoDB
+{ "ts": 1763086802000, "fc_pred": 92.4, "horizonte_s": 10, "modelo": "ridge-v1" }
+```
+
+- `ts` es epoch en ms (el ESP32 lo obtiene por NTP). `fc` y `spo2` son `null` si no hay lectura válida. `semaforo` es `"verde"`, `"amarillo"` o `"rojo"` (el amarillo se muestra en naranja).
+- Los tipos están en `dashboard/src/tipos.ts` y el enrutado por tópico en `dashboard/src/telemetria/estado.ts`.
+- La Rule `bio_a_s3` filtra `bio/+/data`, así que `vitals` y `pred` no llegan a S3.
+
+### Cómo se conecta
+
+1. Login con el **User Pool** (OIDC, *authorization code*) mediante `react-oidc-context`.
+2. Con el `id_token`, el navegador pide al **Identity Pool** credenciales temporales (`GetId` + `GetCredentialsForIdentity`).
+3. Firma con **SigV4** la URL `wss://<endpoint>/mqtt` (servicio `iotdevicegateway`) y se conecta con `mqtt.js` usando el *client ID* `web-<uuid>`.
+4. Si la conexión se cae, vuelve a firmar y reconecta con espera exponencial; renueva las credenciales 5 min antes de que expiren.
+
+No usa el AWS SDK: las llamadas a Cognito y la firma están en `dashboard/src/aws/`. `mqtt.js` se carga solo cuando hace falta, así que el modo demo no lo descarga.
+
+### Configuración
+
+Vite **incrusta las variables `VITE_*` al compilar**. Copia `dashboard/.env.example` según cómo lo ejecutes:
+
+| Archivo | Lo usa | Notas |
+|---|---|---|
+| `dashboard/.env` | `pnpm dev` y `docker compose up dashboard-dev` | Modo desarrollo: **no** lee `.env.production` |
+| `dashboard/.env.production` | `docker build` / `docker compose up dashboard` | Entra al contexto de Docker (está en `.gitignore`, pero no en `.dockerignore`). No declares `VITE_*` en el Dockerfile: aunque estén vacías, pisan este archivo |
+
+| Variable | Obligatoria | Valor |
+|---|---|---|
+| `VITE_AUTHORITY` | Sí | Issuer del User Pool: `https://cognito-idp.us-east-2.amazonaws.com/<userPoolId>` |
+| `VITE_CLIENT_ID` | Sí | App client del User Pool |
+| `VITE_REDIRECT_URI` | Sí | URL de callback, p. ej. `http://localhost:5173/` |
+| `VITE_LOGOUT_URI` | Sí | Debe coincidir **exactamente** con una *Allowed sign-out URL* del App client |
+| `VITE_COGNITO_DOMAIN` | Sí | Dominio del *managed login*, `https://<prefijo>.auth.us-east-2.amazoncognito.com` |
+| `VITE_AWS_REGION` | No | `us-east-2` por defecto |
+| `VITE_IDENTITY_POOL_ID` | Sí, para datos reales | `us-east-2:<uuid>` |
+| `VITE_IOT_ENDPOINT` | Sí, para datos reales | `<prefijo>-ats.iot.us-east-2.amazonaws.com`, sin `wss://` ni `/mqtt` |
+| `VITE_THING_NAMES` | Sí, para datos reales | Uno o varios `THING_NAME` separados por coma |
+| `VITE_HISTORY_API_URL` | No | API del historial de predicciones |
+| `VITE_ENABLE_CMD` | No | `true` muestra el panel de sesión de captura |
+| `VITE_DEMO` | No | `true` simula los datos; con `VITE_AUTHORITY` vacío también omite el login |
+| `PORT`, `ALLOWED_HOSTS` | No | Servidor de desarrollo de Vite |
+
+### Ejecutar
+
+```bash
+cd dashboard
+pnpm install
+pnpm dev                                   # http://localhost:5173 con .env
+pnpm lint && pnpm build                    # verificación (TypeScript + ESLint + build)
+
+docker compose up --build dashboard        # producción (nginx) en http://localhost:8080, con .env.production
+docker compose up --build dashboard-dev    # Vite con recarga, con .env
+```
+
+Modo demo sin AWS ni login (PowerShell):
+
+```powershell
+$env:VITE_DEMO="true"; $env:VITE_AUTHORITY=""; pnpm dev
+```
+
+En la demo, «Sesión de captura» con la actividad `correr` sube la FC hasta ~145 lpm (el semáforo pasa por verde, naranja y rojo), y los botones «Simular sin contacto» y «Simular caída» prueban esos estados.
+
+### Configuración de AWS para el dashboard
+
+> Pendiente: estos pasos todavía no se han hecho en la cuenta. Todo va en `us-east-2`.
+
+1. **App client del User Pool** (*Login pages*): proveedor *Cognito user pool directory*, grant *Authorization code*, scopes `openid`, `email` y `phone`, la *Callback URL* (`http://localhost:5173/`) y en *Allowed sign-out URLs* exactamente el valor de `VITE_LOGOUT_URI`. Agrega también las URLs de producción.
+2. **Identity Pool** con el User Pool y su App client como proveedor autenticado. Su ID va en `VITE_IDENTITY_POOL_ID`.
+3. **Rol IAM autenticado** del Identity Pool con esta política (quita `data` si no usarás la onda PPG y el `Publish` si no usarás el panel de captura):
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       { "Effect": "Allow", "Action": "iot:Connect",
+         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:client/web-*" },
+       { "Effect": "Allow", "Action": "iot:Subscribe",
+         "Resource": [
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/bio/*/status",
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/bio/*/vitals",
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/bio/*/pred",
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/bio/*/data" ] },
+       { "Effect": "Allow", "Action": "iot:Receive",
+         "Resource": [
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/bio/*/status",
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/bio/*/vitals",
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/bio/*/pred",
+           "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/bio/*/data" ] },
+       { "Effect": "Allow", "Action": "iot:Publish",
+         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topic/bio/*/cmd" }
+     ]
+   }
+   ```
+
+   `bio-policy` no sirve para el navegador: `${iot:Connection.Thing.ThingName}` solo funciona con conexiones por certificado.
+
+4. **Política IoT del dashboard** (por ejemplo `dashboard-policy`) con el mismo documento, **adjunta a cada identidad de Cognito**. Con identidades autenticadas, IoT exige las dos políticas; sin esta, cierra la conexión sin explicar. El dashboard muestra el *Identity ID* en el aviso de error:
+
+   ```bash
+   aws iot create-policy --policy-name dashboard-policy --policy-document file://dashboard-policy.json --region us-east-2
+   aws iot attach-policy --policy-name dashboard-policy --target <identityId> --region us-east-2
+   ```
+
+5. **Endpoint** `-ats` (`aws iot describe-endpoint --endpoint-type iot:Data-ATS --region us-east-2`) en `VITE_IOT_ENDPOINT`, y los `THING_NAME` en `VITE_THING_NAMES`.
+
+### API del historial
+
+Contrato esperado (API Gateway → DynamoDB, con CORS para el origen del dashboard):
+
+```text
+GET {VITE_HISTORY_API_URL}/predicciones?thing=<thing>&desde=<ms>&hasta=<ms>
+Authorization: Bearer <id_token>
+→ Prediccion[]   o   { "items": Prediccion[] }
+```
+
 ## Costos
 
 Con lotes de ~10 KB, una hora de captura genera unos **2,400 lotes**. Cada lote cuenta como 2 mensajes de IoT Core (se cobra en bloques de 5 KB) y produce una escritura en S3. Al precio de pago serían centavos de dólar por hora de grabación. En una cuenta del plan gratuito se descuenta de los créditos.
 
 - Crea una alerta en **AWS Budgets** de 1 USD antes de conectar cualquier dispositivo.
 - No dejes la pulsera transmitiendo sin necesidad: manda siempre `stop` al terminar cada sesión.
+- **Dashboard:** IoT Core cobra cada entrega a cada suscriptor. `vitals` a 1 Hz son 3,600 mensajes/h publicados **más 3,600/h por cada pestaña abierta**. Recibir `data` suma ~2,400 entregas/h de ~10 KB (2 bloques de 5 KB cada una); por eso la onda PPG está apagada por defecto.
 
 ## Solución de problemas
 
@@ -324,12 +495,19 @@ Con lotes de ~10 KB, una hora de captura genera unos **2,400 lotes**. Cada lote 
 | Arduino: `exit status 1` sin más detalles | El error está en el panel *Output* (`Ctrl+Shift+Y`) | Un error común: un `struct` usado en la firma de una función debe declararse **antes** de la primera función del `.ino`, porque el IDE inserta ahí los prototipos automáticos |
 | `Sketch too big` | TLS no cabe en la partición de 1.2 MB | Usa el esquema de particiones *Huge APP* |
 | Pocas ventanas con FC válida | Hay movimiento o el sensor tiene poca presión | Revisa la tabla de diagnóstico de `modelo_fc.py` y la figura `5_diagnostico_ventanas.png` |
+| Dashboard: «Falta configuración» o no aparece el botón «Salir» con `pnpm dev` | El modo desarrollo lee `.env`, no `.env.production` | Crea `dashboard/.env` (puede ser copia de `.env.production`) y reinicia `pnpm dev` |
+| Dashboard: «Invalid request» al cerrar sesión | `logout_uri` no coincide exactamente con las *Allowed sign-out URLs* (la `/` final cuenta) | Iguala `VITE_LOGOUT_URI` y la URL registrada en el App client |
+| Dashboard: «Client is not enabled for OAuth2.0 flows» | El App client perdió su configuración OAuth | En *Login pages*: proveedor *Cognito user pool directory*, grant *Authorization code* y scopes |
+| Dashboard: «AWS IoT cerró la conexión» | Falta la política IoT adjunta a la identidad de Cognito, o el rol IAM no permite el tópico | `aws iot attach-policy` con el *Identity ID* que muestra el aviso ([pasos](#configuración-de-aws-para-el-dashboard)) |
+| Dashboard: el corazón y las burbujas solo cambian de brillo | El sistema pide *reducir movimiento* | Activa *Efectos de animación* en Windows (Accesibilidad → Efectos visuales) |
+| Dashboard en Docker sin configuración | Hay `ARG`/`ENV VITE_*` en el Dockerfile o falta `.env.production` | Quita esas líneas; Vite debe leer `.env.production` |
 
 ## Seguridad
 
-Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas, el `.env` ni los datasets con información de personas (`dataset.csv`, `datos/`, `salida_fc/`). El `.gitignore` ya los excluye.
+Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas, los `.env` / `.env.production` del dashboard ni los datasets con información de personas (`dataset.csv`, `datos/`, `salida_fc/`). El `.gitignore` ya los excluye.
 
 - **Si subiste una llave privada por error**, desactiva ese certificado en *IoT Core → Security → Certificates* y crea uno nuevo. Borrar el commit no basta, porque la llave sigue en el historial y en los forks.
+- **El dashboard nunca lleva certificados ni llaves.** Usa credenciales temporales de Cognito, limitadas por el rol IAM y la política IoT. No muestres tokens en pantalla ni en la consola.
 - **Los datos fisiológicos son datos personales.** Usa identificadores como `s01` en lugar de nombres, y no publiques los CSV sin el consentimiento de los participantes.
 
 ## Siguientes pasos
@@ -340,6 +518,10 @@ Nunca subas al repositorio `secrets.h`, la carpeta `certs/`, las llaves privadas
 - [ ] Validar la FC de referencia contra un oxímetro comercial.
 - [ ] Filtrar los artefactos de movimiento usando el acelerómetro (restar sus frecuencias del espectro del PPG).
 - [ ] Reentrenar y comparar contra la persistencia. Si el modelo la supera, evaluar cómo ejecutarlo en tiempo real.
+- [ ] Firmware: publicar `bio/<thing>/vitals` a 1 Hz desde la tarea MQTT del núcleo 0 (requiere hora por NTP).
+- [ ] AWS: Identity Pool, rol IAM, política IoT del dashboard y `VITE_IDENTITY_POOL_ID` / `VITE_IOT_ENDPOINT` / `VITE_THING_NAMES` ([pasos](#configuración-de-aws-para-el-dashboard)).
+- [ ] Lambda de predicción: publicar en `bio/<thing>/pred` y guardar en DynamoDB; API Gateway para el historial.
+- [ ] Probar el dashboard con la pulsera real y desplegarlo (agregar las URLs de producción en Cognito).
 
 ## Estructura del repositorio
 
@@ -360,9 +542,22 @@ pulso-seguro/
 │   └── cargar_s3.py           # S3 → dataset.csv
 ├── modelo/
 │   └── modelo_fc.py           # predicción de FC
+├── dashboard/                 # dashboard web (React + Vite)
+│   ├── src/
+│   │   ├── aws/               # Cognito Identity (credenciales) y firma SigV4
+│   │   ├── telemetria/        # transporte MQTT, simulador demo, parsers y estado
+│   │   ├── componentes/       # tarjetas, gráficas, onda PPG, paneles, cuadrícula
+│   │   ├── diseno/            # diseño de la cuadrícula y su guardado
+│   │   ├── utilidades/        # hora, tamaños
+│   │   ├── config.ts          # variables VITE_*
+│   │   ├── tipos.ts           # contratos de los tópicos
+│   │   └── App.tsx, main.tsx  # login y arranque
+│   ├── Dockerfile, nginx.conf, compose.yaml
+│   └── .env.example
 ├── requirements.txt           # dependencias del modelo
+├── AGENTS.md                  # estado del proyecto y guía para agentes de código
 ├── .gitignore
 └── README.md
 ```
 
-Carpetas locales que no se suben (ver `.gitignore`): `certs/`, `.venv/`, `secrets.h`, `dataset.csv` y `salida_fc/`.
+Archivos locales que no se suben (ver `.gitignore`): `certs/`, `.venv/`, `secrets.h`, `dataset.csv`, `salida_fc/`, `dashboard/.env` y `dashboard/.env.production`.
