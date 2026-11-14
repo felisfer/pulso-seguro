@@ -61,7 +61,7 @@ export function GraficaLinea({
   huecoMaxMs = 5000,
   ahora,
   decimales = 0,
-  vacio = "Esperando datos…",
+  vacio = "Waiting for data…",
   formatoEjeX,
 }: Props) {
   const [contenedor, { ancho, alto: altoMedido }] = useTamano<HTMLDivElement>()
@@ -170,7 +170,7 @@ export function GraficaLinea({
           </ul>
         )}
         <button type="button" className="boton-texto" onClick={() => setVerTabla(v => !v)} aria-pressed={verTabla}>
-          {verTabla ? "Ver gráfica" : "Ver tabla"}
+          {verTabla ? "Show chart" : "Show table"}
         </button>
       </figcaption>
 
@@ -179,7 +179,7 @@ export function GraficaLinea({
           <table className="tabla">
             <thead>
               <tr>
-                <th scope="col">Hora</th>
+                <th scope="col">Time</th>
                 {series.map(s => (
                   <th scope="col" key={s.id}>{s.nombre}</th>
                 ))}
@@ -201,7 +201,7 @@ export function GraficaLinea({
       ) : (
         <div ref={contenedor} className="grafica-lienzo" style={llenar ? undefined : { height: alto }}>
           {ancho > 0 && (
-            <svg width={ancho} height={altoReal} role="img" aria-label={`${titulo} en el tiempo`}>
+            <svg width={ancho} height={altoReal} role="img" aria-label={`${titulo} over time`}>
               {escala.ticks.map(v => (
                 <g key={v}>
                   <line className="rejilla" x1={M.izquierda} x2={ancho - M.derecha} y1={y(v)} y2={y(v)} />
@@ -218,7 +218,7 @@ export function GraficaLinea({
               {ahora !== undefined && ahora > desde && ahora < hasta && (
                 <g>
                   <line className="marca-ahora" x1={x(ahora)} x2={x(ahora)} y1={M.arriba} y2={M.arriba + altoPlot} />
-                  <text className="eje" x={x(ahora) - 4} y={M.arriba + 10} textAnchor="end">ahora</text>
+                  <text className="eje" x={x(ahora) - 4} y={M.arriba + 10} textAnchor="end">now</text>
                 </g>
               )}
               {series.map((s, i) => (

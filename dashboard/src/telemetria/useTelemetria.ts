@@ -48,7 +48,7 @@ export function useTelemetria(thing: string, idToken: string | undefined) {
 
   const publicar = useCallback(
     async (cmd: Cmd) => {
-      if (!transporte.current) throw new Error("Sin conexión.")
+      if (!transporte.current) throw new Error("Not connected.")
       await transporte.current.publicar(`bio/${thing}/cmd`, JSON.stringify(cmd))
     },
     [thing],

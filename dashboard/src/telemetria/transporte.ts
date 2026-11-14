@@ -60,7 +60,7 @@ export function crearTransporteIot(
     eventos.onEstado(intento === 0 ? "conectando" : "reconectando", undefined, cred?.identityId)
     try {
       const idToken = obtenerIdToken()
-      if (!idToken) throw new Error("No hay sesión activa (falta id_token).")
+      if (!idToken) throw new Error("No active session (missing id_token).")
       if (!cred || cred.expiracion - Date.now() < MARGEN_RENOVACION_MS) {
         cred = await obtenerCredenciales(idToken)
       }
@@ -106,7 +106,7 @@ export function crearTransporteIot(
         cliente = null
         if (!seConecto && !ultimoError) {
           ultimoError =
-            "AWS IoT cerró la conexión. Revisa que la política IoT del dashboard esté adjunta a esta identidad."
+            "AWS IoT closed the connection. Check that the dashboard IoT policy is attached to this identity."
         }
         programarReconexion()
       })
@@ -129,7 +129,7 @@ export function crearTransporteIot(
     },
     publicar(topic, payload) {
       return new Promise((resolve, reject) => {
-        if (!cliente?.connected) return reject(new Error("Sin conexión con AWS IoT."))
+        if (!cliente?.connected) return reject(new Error("Not connected to AWS IoT."))
         cliente.publish(topic, payload, { qos: 1 }, err => (err ? reject(err) : resolve()))
       })
     },

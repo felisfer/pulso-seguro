@@ -43,8 +43,8 @@ async function cargarHistorial(
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
     signal: señal,
   })
-  if (respuesta.status === 401) throw new Error("la sesión expiró; vuelve a iniciar sesión")
-  if (!respuesta.ok) throw new Error(`La API respondió ${respuesta.status}`)
+  if (respuesta.status === 401) throw new Error("the session expired; sign in again")
+  if (!respuesta.ok) throw new Error(`The API responded ${respuesta.status}`)
   const json = (await respuesta.json()) as PuntoHistorial[] | { items: PuntoHistorial[]; truncado?: boolean }
   const items = Array.isArray(json) ? json : json.items
   return {
@@ -96,13 +96,13 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
     return [
       {
         id: "real",
-        nombre: "FC medida",
+        nombre: "Measured HR",
         color: "var(--serie-1)",
         puntos: resultado.datos.filter(p => p.fc_real !== undefined).map(p => ({ t: objetivo(p), v: p.fc_real! })),
       },
       {
         id: "pred",
-        nombre: "FC predicha",
+        nombre: "Predicted HR",
         color: "var(--serie-2)",
         discontinua: true,
         puntos: resultado.datos.map(p => ({ t: objetivo(p), v: p.fc_pred })),
@@ -118,9 +118,9 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
   return (
     <section className="panel panel-lleno" aria-labelledby="titulo-historial">
       <div className="panel-encabezado">
-        <h2 id="titulo-historial" className="panel-titulo">Historial de predicciones</h2>
+        <h2 id="titulo-historial" className="panel-titulo">Prediction history</h2>
         {disponible && (
-          <div className="segmentado" role="group" aria-label="Rango de tiempo">
+          <div className="segmentado" role="group" aria-label="Time range">
             {RANGOS.map(r => (
               <button key={r.id} type="button" aria-pressed={rango === r.id} onClick={() => cambiarRango(r.id)}>
                 {r.nombre}
@@ -133,7 +133,7 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
                 setRecarga(n => n + 1)
               }}
             >
-              Actualizar
+              Refresh
             </button>
           </div>
         )}
@@ -141,17 +141,17 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
 
       {!disponible ? (
         <p className="vacio">
-          Configura <code>VITE_HISTORY_API_URL</code> (API Gateway → DynamoDB) para ver predicciones anteriores.
+          Set <code>VITE_HISTORY_API_URL</code> (API Gateway → DynamoDB) to see past predictions.
         </p>
       ) : resultado.tipo === "cargando" ? (
-        <p className="vacio">Cargando…</p>
+        <p className="vacio">Loading…</p>
       ) : resultado.tipo === "error" ? (
-        <p className="error-linea" role="alert">No se pudo cargar el historial: {resultado.mensaje}</p>
+        <p className="error-linea" role="alert">Could not load the history: {resultado.mensaje}</p>
       ) : (
         <>
           <GraficaLinea
-            titulo="FC medida vs. predicha"
-            unidad="lpm"
+            titulo="Measured vs. predicted HR"
+            unidad="bpm"
             series={series}
             desde={resultado.desde}
             hasta={resultado.hasta + 10_000}
@@ -160,12 +160,12 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
             decimales={1}
             huecoMaxMs={60_000}
             formatoEjeX={rango === "1h" ? horaCorta : fechaHora}
-            vacio="No hay predicciones en este rango."
+            vacio="No predictions in this range."
           />
           <p className="tarjeta-pie">
-            {resultado.datos.length.toLocaleString("es-MX")} predicciones
-            {resultado.datos.length > 0 && ` · modelo ${resultado.datos[resultado.datos.length - 1].modelo}`}
-            {resultado.truncado && " · rango recortado: se muestran solo las más recientes"}
+            {resultado.datos.length.toLocaleString("en-US")} predictions
+            {resultado.datos.length > 0 && ` · model ${resultado.datos[resultado.datos.length - 1].modelo}`}
+            {resultado.truncado && " · range trimmed: only the most recent are shown"}
           </p>
         </>
       )}

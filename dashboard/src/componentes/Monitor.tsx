@@ -70,13 +70,13 @@ export function Monitor({ thing, idToken, usuario }: Props) {
     () => [
       {
         id: "fc",
-        nombre: "FC medida",
+        nombre: "Measured HR",
         color: "var(--serie-1)",
         puntos: tel.historialVitals.map(v => ({ t: v.t, v: v.fc })),
       },
       {
         id: "pred",
-        nombre: "FC predicha",
+        nombre: "Predicted HR",
         color: "var(--serie-2)",
         discontinua: true,
         // Cada predicción se dibuja en el instante que predice (ts + horizonte).
@@ -103,8 +103,8 @@ export function Monitor({ thing, idToken, usuario }: Props) {
         return (
           <section className="panel panel-lleno" aria-labelledby="titulo-tendencias">
             <div className="panel-encabezado">
-              <h2 id="titulo-tendencias" className="panel-titulo">Tendencias en vivo</h2>
-              <div className="segmentado" role="group" aria-label="Ventana de tiempo">
+              <h2 id="titulo-tendencias" className="panel-titulo">Live trends</h2>
+              <div className="segmentado" role="group" aria-label="Time window">
                 {VENTANAS.map(v => (
                   <button key={v.id} type="button" aria-pressed={minutos === v.id} onClick={() => setMinutos(v.id)}>
                     {v.nombre}
@@ -113,8 +113,8 @@ export function Monitor({ thing, idToken, usuario }: Props) {
               </div>
             </div>
             <GraficaLinea
-              titulo="Frecuencia cardiaca"
-              unidad="lpm"
+              titulo="Heart rate"
+              unidad="bpm"
               series={seriesFc}
               desde={desde}
               hasta={hasta}
@@ -135,10 +135,10 @@ export function Monitor({ thing, idToken, usuario }: Props) {
         return (
           <section className="panel panel-lleno" aria-labelledby="titulo-ppg">
             <div className="panel-encabezado">
-              <h2 id="titulo-ppg" className="panel-titulo">Onda de pulso (PPG)</h2>
+              <h2 id="titulo-ppg" className="panel-titulo">Pulse wave (PPG)</h2>
               <label className="interruptor">
                 <input type="checkbox" checked={tel.verPPG} onChange={e => tel.setVerPPG(e.target.checked)} />
-                <span>Recibir señal cruda</span>
+                <span>Receive raw signal</span>
               </label>
             </div>
             {tel.verPPG ? (
@@ -146,13 +146,13 @@ export function Monitor({ thing, idToken, usuario }: Props) {
                 <OndaPPG muestras={tel.ppg} />
                 <p className="tarjeta-pie">
                   {tel.sesionPPG
-                    ? `Sesión ${tel.sesionPPG.sesion} · ${tel.sesionPPG.label} · ${tel.sesionPPG.sujeto} · ${tel.muestrasPerdidas} muestras perdidas`
-                    : "Esperando lotes… la pulsera solo envía la señal cruda durante una sesión de captura (entre start y stop)."}
+                    ? `Session ${tel.sesionPPG.sesion} · ${tel.sesionPPG.label} · ${tel.sesionPPG.sujeto} · ${tel.muestrasPerdidas} samples lost`
+                    : "Waiting for batches… the wristband only sends the raw signal during a capture session (between start and stop)."}
                 </p>
               </>
             ) : (
               <p className="vacio">
-                Desactivado por defecto: suscribirse a <code>data</code> suma ~2,400 mensajes/h de ~10 KB en AWS IoT.
+                Off by default: subscribing to <code>data</code> adds ~2,400 messages/h of ~10 KB in AWS IoT.
               </p>
             )}
           </section>
@@ -185,9 +185,9 @@ export function Monitor({ thing, idToken, usuario }: Props) {
       <AlertaCaida inicio={tel.inicioCaida} />
       {editable && (
         <p className="aviso-edicion" role="status">
-          Arrastra un panel para moverlo y usa sus bordes o la esquina inferior derecha para cambiar su tamaño. Los
-          cambios se guardan en este navegador. Pulsa <strong>Listo</strong> al terminar o{" "}
-          <strong>Restablecer diseño</strong> para volver al original.
+          Drag a panel to move it and use its edges or bottom-right corner to resize it. Changes are
+          saved in this browser. Press <strong>Done</strong> when finished or{" "}
+          <strong>Reset layout</strong> to go back to the original.
         </p>
       )}
 
@@ -227,20 +227,20 @@ export function Monitor({ thing, idToken, usuario }: Props) {
       </div>
 
       {config.demo && (
-        <section className="panel panel-demo" aria-label="Controles del modo demo">
+        <section className="panel panel-demo" aria-label="Demo mode controls">
           <p>
-            <strong>Modo demo:</strong> los datos son simulados en el navegador con el mismo formato que los tópicos{" "}
-            <code>vitals</code>, <code>pred</code> y <code>data</code>.
+            <strong>Demo mode:</strong> data is simulated in the browser with the same format as the{" "}
+            <code>vitals</code>, <code>pred</code> and <code>data</code> topics.
           </p>
           <div className="acciones-demo">
             <button type="button" className="boton" onClick={tel.simularSinContacto}>
-              Simular sin contacto
+              Simulate no contact
             </button>
             <button type="button" className="boton" onClick={tel.simularCaida}>
-              Simular caída
+              Simulate fall
             </button>
             <button type="button" className="boton" onClick={tel.simularPanico}>
-              Simular pánico
+              Simulate panic
             </button>
           </div>
         </section>
@@ -250,10 +250,10 @@ export function Monitor({ thing, idToken, usuario }: Props) {
 }
 
 const TEXTO_CONEXION: Record<Telemetria["conexion"], string> = {
-  conectando: "Conectando…",
-  conectado: "Conectado a AWS IoT",
-  reconectando: "Reconectando…",
-  error: "Sin conexión",
+  conectando: "Connecting…",
+  conectado: "Connected to AWS IoT",
+  reconectando: "Reconnecting…",
+  error: "Disconnected",
 }
 
 interface PropsBarra {
@@ -273,18 +273,18 @@ function BarraEstado({ tel, ahora, editando, puedeEditar, alEditar, alRestablece
     <div className="barra-estado">
       <span className={`insignia ${claseConexion}`} role="status">
         <span className="punto" aria-hidden="true" />
-        {config.demo ? "Datos simulados" : TEXTO_CONEXION[tel.conexion]}
+        {config.demo ? "Simulated data" : TEXTO_CONEXION[tel.conexion]}
       </span>
       <span className={`insignia ${clasePulsera}`}>
         <span className="punto" aria-hidden="true" />
-        Pulsera {tel.online === null ? "sin estado" : tel.online ? "en línea" : "desconectada"}
+        Wristband {tel.online === null ? "status unknown" : tel.online ? "online" : "disconnected"}
       </span>
-      {tel.vitals && <span className="barra-texto">Último dato {haceCuanto(ahora - tel.vitals.recibido)}</span>}
+      {tel.vitals && <span className="barra-texto">Last data {haceCuanto(ahora - tel.vitals.recibido)}</span>}
       {puedeEditar && (
         <span className="barra-acciones">
           {editando && (
             <button type="button" className="boton barra-accion" onClick={alRestablecer}>
-              Restablecer diseño
+              Reset layout
             </button>
           )}
           <button
@@ -293,7 +293,7 @@ function BarraEstado({ tel, ahora, editando, puedeEditar, alEditar, alRestablece
             aria-pressed={editando}
             onClick={alEditar}
           >
-            {editando ? "Listo" : "Editar diseño"}
+            {editando ? "Done" : "Edit layout"}
           </button>
         </span>
       )}
@@ -305,11 +305,11 @@ function AvisoConexion({ tel }: { tel: Telemetria }) {
   if (tel.conexion !== "error" && !(tel.conexion === "reconectando" && tel.detalleConexion)) return null
   return (
     <div className={`aviso ${tel.conexion === "error" ? "aviso-error" : ""}`}>
-      <strong>{tel.conexion === "error" ? "No se pudo conectar con AWS IoT." : "Reconectando con AWS IoT…"}</strong>{" "}
+      <strong>{tel.conexion === "error" ? "Could not connect to AWS IoT." : "Reconnecting to AWS IoT…"}</strong>{" "}
       {tel.detalleConexion}
       {tel.identityId && (
         <>
-          {" "}Identidad de Cognito: <code>{tel.identityId}</code>
+          {" "}Cognito identity: <code>{tel.identityId}</code>
         </>
       )}
     </div>

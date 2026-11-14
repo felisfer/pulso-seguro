@@ -150,7 +150,7 @@ function reducirMensaje(estado: EstadoTelemetria, topic: string, texto: string, 
       const eventos =
         estado.online === null && online
           ? estado.eventos
-          : conEvento(estado, recibido, online ? "bien" : "aviso", online ? "Pulsera en línea" : "Pulsera desconectada")
+          : conEvento(estado, recibido, online ? "bien" : "aviso", online ? "Wristband online" : "Wristband disconnected")
       return { ...estado, online, eventos }
     }
 
@@ -161,18 +161,18 @@ function reducirMensaje(estado: EstadoTelemetria, topic: string, texto: string, 
       const previo = estado.vitals
       let eventos = estado.eventos
       if (nuevo.caida && !previo?.caida) {
-        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Caída detectada")
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Fall detected")
       }
       if (nuevo.panico && !previo?.panico) {
-        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Botón de pánico activado")
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Panic button pressed")
       } else if (!nuevo.panico && previo?.panico) {
-        eventos = conEvento({ ...estado, eventos }, nuevo.t, "info", "Alarma de pánico silenciada en la pulsera")
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "info", "Panic alarm silenced on the wristband")
       }
       if (nuevo.semaforo === "rojo" && previo?.semaforo !== "rojo") {
-        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Signos vitales fuera de rango (rojo)")
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Vital signs out of range (red)")
       }
       if (!nuevo.dedo && previo?.dedo) {
-        eventos = conEvento({ ...estado, eventos }, nuevo.t, "info", "Sensor sin contacto con la piel")
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "info", "Sensor lost contact with the skin")
       }
       const limite = recibido - VENTANA_HISTORIAL_MS
       return {

@@ -6,14 +6,14 @@ import { authHabilitado, config } from "./config"
 
 export default function App() {
   if (authHabilitado) return <AppConLogin />
-  if (config.demo) return <Tablero usuario="Modo demo" />
+  if (config.demo) return <Tablero usuario="Demo mode" />
   return (
     <PantallaCentrada>
-      <h1>Falta configuración</h1>
+      <h1>Missing configuration</h1>
       <p>
-        No se encontró <code>VITE_AUTHORITY</code>. En modo <code>{import.meta.env.MODE}</code> Vite lee{" "}
-        <code>{import.meta.env.DEV ? ".env" : ".env.production"}</code>: agrega ahí las variables de{" "}
-        <code>.env.example</code> y reinicia, o usa <code>VITE_DEMO=true</code> para ver la interfaz con datos simulados.
+        <code>VITE_AUTHORITY</code> was not found. In <code>{import.meta.env.MODE}</code> mode Vite reads{" "}
+        <code>{import.meta.env.DEV ? ".env" : ".env.production"}</code>: add the variables from{" "}
+        <code>.env.example</code> there and restart, or use <code>VITE_DEMO=true</code> to see the interface with simulated data.
       </p>
     </PantallaCentrada>
   )
@@ -37,7 +37,7 @@ function AppConLogin() {
   if (auth.isLoading) {
     return (
       <PantallaCentrada>
-        <p>Cargando sesión…</p>
+        <p>Loading session…</p>
       </PantallaCentrada>
     )
   }
@@ -45,10 +45,10 @@ function AppConLogin() {
   if (auth.error) {
     return (
       <PantallaCentrada>
-        <h1>No se pudo iniciar sesión</h1>
+        <h1>Sign-in failed</h1>
         <p className="error-linea">{auth.error.message}</p>
         <button type="button" className="boton boton-primario" onClick={() => void auth.signinRedirect()}>
-          Volver a intentar
+          Try again
         </button>
       </PantallaCentrada>
     )
@@ -57,10 +57,10 @@ function AppConLogin() {
   if (!auth.isAuthenticated) {
     return (
       <PantallaCentrada>
-        <h1>PulsoSeguro</h1>
-        <p>Monitoreo en vivo de frecuencia cardiaca, SpO₂ y caídas.</p>
+        <h1>HealthyBeats</h1>
+        <p>Live monitoring of heart rate, SpO₂ and falls.</p>
         <button type="button" className="boton boton-primario" onClick={() => void auth.signinRedirect()}>
-          Iniciar sesión
+          Sign in
         </button>
       </PantallaCentrada>
     )

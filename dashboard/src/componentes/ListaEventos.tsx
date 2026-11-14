@@ -10,8 +10,8 @@ const ICONO: Record<Severidad, typeof IconoOk> = {
 }
 
 const ETIQUETA: Record<Severidad, string> = {
-  critico: "Crítico",
-  aviso: "Aviso",
+  critico: "Critical",
+  aviso: "Warning",
   info: "Info",
   bien: "OK",
 }
@@ -19,9 +19,9 @@ const ETIQUETA: Record<Severidad, string> = {
 export function ListaEventos({ eventos }: { eventos: Evento[] }) {
   return (
     <section className="panel panel-lleno" aria-labelledby="titulo-eventos">
-      <h2 id="titulo-eventos" className="panel-titulo">Eventos recientes</h2>
+      <h2 id="titulo-eventos" className="panel-titulo">Recent events</h2>
       {eventos.length === 0 ? (
-        <p className="vacio">Sin eventos en esta sesión del navegador.</p>
+        <p className="vacio">No events in this browser session.</p>
       ) : (
         <ol className="eventos" aria-live="polite">
           {eventos.map(e => {
