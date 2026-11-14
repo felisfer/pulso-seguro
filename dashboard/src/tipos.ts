@@ -14,8 +14,10 @@ export interface Vitals {
   spo2: number | null
   /** IR > 50 000. */
   dedo: boolean
-  /** Caída detectada por el MPU6050. */
+  /** Caída detectada por el MPU6050 (en confirmación o con la alarma activa). */
   caida: boolean
+  /** Alarma por el botón de pánico (pulsación de 3 s) activa. */
+  panico: boolean
   /** Lo decide el ESP32; el dashboard no recalcula umbrales. */
   semaforo: Semaforo
 }

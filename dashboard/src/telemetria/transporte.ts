@@ -23,6 +23,8 @@ export interface Transporte {
   simularCaida?: () => void
   /** Solo en modo demo. */
   simularSinContacto?: () => void
+  /** Solo en modo demo. */
+  simularPanico?: () => void
 }
 
 const MARGEN_RENOVACION_MS = 5 * 60_000

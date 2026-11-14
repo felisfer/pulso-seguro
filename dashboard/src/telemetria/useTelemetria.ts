@@ -56,8 +56,9 @@ export function useTelemetria(thing: string, idToken: string | undefined) {
 
   const simularCaida = useCallback(() => transporte.current?.simularCaida?.(), [])
   const simularSinContacto = useCallback(() => transporte.current?.simularSinContacto?.(), [])
+  const simularPanico = useCallback(() => transporte.current?.simularPanico?.(), [])
 
-  return { ...estado, verPPG, setVerPPG, publicar, simularCaida, simularSinContacto }
+  return { ...estado, verPPG, setVerPPG, publicar, simularCaida, simularSinContacto, simularPanico }
 }
 
 export type Telemetria = ReturnType<typeof useTelemetria>

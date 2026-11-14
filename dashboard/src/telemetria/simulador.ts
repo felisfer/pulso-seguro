@@ -25,6 +25,7 @@ export function crearTransporteDemo(thing: string, eventos: EventosTransporte): 
   let fcObjetivo = 70
   let spo2 = 97.5
   let caidaHasta = 0
+  let panicoHasta = 0
   let sinDedoHasta = 0
   let sesion = { sesion: "", label: "", sujeto: "" }
   let seq = 0
@@ -63,6 +64,7 @@ export function crearTransporteDemo(thing: string, eventos: EventosTransporte): 
         spo2: spo2Leida,
         dedo,
         caida: ahora < caidaHasta,
+        panico: ahora < panicoHasta,
         semaforo: semaforoDe(fcLeida, spo2Leida),
       }
       emitir("vitals", JSON.stringify(vitals))
@@ -147,6 +149,10 @@ export function crearTransporteDemo(thing: string, eventos: EventosTransporte): 
     },
     simularCaida() {
       caidaHasta = Date.now() + 15_000
+    },
+    simularPanico() {
+      // Como el firmware: sigue activa hasta que se silencie; aquí, 20 s.
+      panicoHasta = Date.now() + 20_000
     },
     simularSinContacto() {
       sinDedoHasta = Date.now() + 10_000

@@ -337,6 +337,7 @@ Primer dataset real (10/11/2026): 1 sujeto, 5 sesiones de 60 s, una sola activid
 | SpO₂ | Valor y **burbujas que suben** a la superficie (oxigenación) | `vitals.spo2` |
 | Sensor | Verde con contacto, rojo sin contacto | `vitals.dedo` |
 | Aviso de caída | Banda roja mientras dure la caída, con la hora en que empezó | `vitals.caida` |
+| Aviso de pánico | Banda roja mientras la alarma del botón de pánico siga activa, con la hora en que empezó | `vitals.panico` |
 | Tendencias en vivo | FC medida contra FC predicha (cada predicción se dibuja en el instante que predice) y SpO₂, en ventanas de 1, 5 o 10 min | Historial en memoria de `vitals` y `pred` |
 | Eventos recientes | Caída, semáforo en rojo, pérdida de contacto, pulsera conectada o desconectada | Calculado en el navegador |
 | Onda de pulso (PPG) | Canal IR de los últimos 6 s y muestras perdidas. **Apagada por defecto** por costo | `data` |
@@ -367,7 +368,7 @@ Primer dataset real (10/11/2026): 1 sujeto, 5 sesiones de 60 s, una sola activid
  "fc_pred":92.4,"horizonte_s":10,"modelo":"20261112-030721","usado":"ridge"}
 ```
 
-- `ts` es epoch en ms (el ESP32 lo obtiene por NTP; manda `0` mientras no tiene hora y el dashboard usa la de recepción). `fc` y `spo2` son `null` si no hay lectura válida. `semaforo` es `"verde"`, `"amarillo"` o `"rojo"` (el amarillo se muestra en naranja): el peor entre FC y SpO₂, y `"amarillo"` sin lectura. La caída y el pánico no cambian el semáforo; van en `caida` y `panico` (el dashboard todavía no muestra `panico`).
+- `ts` es epoch en ms (el ESP32 lo obtiene por NTP; manda `0` mientras no tiene hora y el dashboard usa la de recepción). `fc` y `spo2` son `null` si no hay lectura válida. `semaforo` es `"verde"`, `"amarillo"` o `"rojo"` (el amarillo se muestra en naranja): el peor entre FC y SpO₂, y `"amarillo"` sin lectura. La caída y el pánico no cambian el semáforo; van en `caida` y `panico`, y el dashboard muestra cada una con su banda roja y su evento.
 - Los tipos están en `dashboard/src/tipos.ts` y el enrutado por tópico en `dashboard/src/telemetria/estado.ts`.
 - La Rule `bio_a_s3` filtra `bio/+/data`, así que `vitals` y `pred` no llegan a S3.
 

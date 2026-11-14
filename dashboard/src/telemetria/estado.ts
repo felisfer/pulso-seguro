@@ -30,6 +30,8 @@ export interface EstadoTelemetria {
   vitals: VitalsRecibidos | null
   /** Momento en que `caida` pasó a true (null si no hay caída activa). */
   inicioCaida: number | null
+  /** Momento en que `panico` pasó a true (null si no hay alarma de pánico activa). */
+  inicioPanico: number | null
   historialVitals: VitalsRecibidos[]
   pred: Prediccion | null
   historialPred: Prediccion[]
@@ -44,6 +46,7 @@ export const estadoInicial: EstadoTelemetria = {
   online: null,
   vitals: null,
   inicioCaida: null,
+  inicioPanico: null,
   historialVitals: [],
   pred: null,
   historialPred: [],
@@ -73,6 +76,7 @@ export function parseVitals(texto: string): Vitals | null {
       spo2: v.spo2 ?? null,
       dedo: Boolean(v.dedo),
       caida: Boolean(v.caida),
+      panico: Boolean(v.panico),
       semaforo: SEMAFOROS.includes(v.semaforo as Semaforo) ? (v.semaforo as Semaforo) : "amarillo",
     }
   } catch {
@@ -159,6 +163,11 @@ function reducirMensaje(estado: EstadoTelemetria, topic: string, texto: string, 
       if (nuevo.caida && !previo?.caida) {
         eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Caída detectada")
       }
+      if (nuevo.panico && !previo?.panico) {
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Botón de pánico activado")
+      } else if (!nuevo.panico && previo?.panico) {
+        eventos = conEvento({ ...estado, eventos }, nuevo.t, "info", "Alarma de pánico silenciada en la pulsera")
+      }
       if (nuevo.semaforo === "rojo" && previo?.semaforo !== "rojo") {
         eventos = conEvento({ ...estado, eventos }, nuevo.t, "critico", "Signos vitales fuera de rango (rojo)")
       }
@@ -172,6 +181,7 @@ function reducirMensaje(estado: EstadoTelemetria, topic: string, texto: string, 
         online: true,
         vitals: nuevo,
         inicioCaida: nuevo.caida ? (previo?.caida ? estado.inicioCaida : nuevo.t) : null,
+        inicioPanico: nuevo.panico ? (previo?.panico ? estado.inicioPanico : nuevo.t) : null,
         historialVitals: [...estado.historialVitals.filter(x => x.t >= limite), nuevo],
         eventos,
       }

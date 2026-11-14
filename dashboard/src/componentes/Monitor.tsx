@@ -181,6 +181,7 @@ export function Monitor({ thing, idToken, usuario }: Props) {
         }}
       />
       <AvisoConexion tel={tel} />
+      <AlertaCaida tipo="panico" inicio={tel.inicioPanico} />
       <AlertaCaida inicio={tel.inicioCaida} />
       {editable && (
         <p className="aviso-edicion" role="status">
@@ -237,6 +238,9 @@ export function Monitor({ thing, idToken, usuario }: Props) {
             </button>
             <button type="button" className="boton" onClick={tel.simularCaida}>
               Simular caída
+            </button>
+            <button type="button" className="boton" onClick={tel.simularPanico}>
+              Simular pánico
             </button>
           </div>
         </section>
