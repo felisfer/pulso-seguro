@@ -34,6 +34,23 @@
  *    - Tools -> Partition Scheme -> "Huge APP (3MB No OTA/1MB SPIFFS)": con TLS, el
  *      programa ya no cabe en la partición por defecto de 1.2 MB.
  *
+ * Predicción de FC a +10 s (versión 6):
+ *    - Una tarea en el núcleo 0 calcula 16 features cada 2 s (ventana de 8 s) con
+ *      features_fc.h, el mismo algoritmo que modelo/features.py (probar_paridad.py).
+ *    - Las ventanas con FC confiable se publican en bio/<THING_NAME>/features; la Lambda
+ *      responde en bio/<THING_NAME>/pred con la FC prevista (prediccion_fc.h).
+ *    - La pantalla muestra "FC en 10 s". La predicción solo puede ADELANTAR el semáforo de
+ *      FC de verde a amarillo ("Prev. alta"); nunca quita un amarillo o un rojo.
+ *    - Sin internet no hay FC prevista, pero todo lo demás funciona igual: las caídas,
+ *      el pánico y el semáforo se deciden siempre en el ESP32.
+ *
+ * Vitals para el dashboard (versión 7):
+ *    - La tarea AWS publica bio/<THING_NAME>/vitals con FC, SpO2, dedo, caída, pánico y el
+ *      semáforo general (el peor entre FC y SpO2, el mismo que la pantalla). Se envía al
+ *      cambiar (máximo 1 por segundo) y, si nada cambia, cada 5 s.
+ *    - La hora (ts) viene de NTP; mientras no se sincroniza se manda ts = 0.
+ *    - La política IoT del dispositivo debe permitir publicar en bio/<THING_NAME>/vitals.
+ *
  * Reglas automatizadas:
  *    R1 Detección de caída en 4 fases: caída libre -> impacto -> inmovilidad -> cambio de orientación
  *    R2 Ventana de confirmación de 15 s; si no se cancela, alarma completa (máximo 60 s de sonido)
@@ -77,12 +94,17 @@
 #include "heartRate.h"
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <esp_heap_caps.h>      // bloque libre más grande del heap (diagnóstico de TLS)
 #include "secrets.h"           // WIFI_SSID, WIFI_PASS, THING_NAME, AWS_ENDPOINT y certificados
+#include "prediccion_fc.h"     // features + MQTT de la predicción (incluye features_fc.h)
 
 // ----------------------------------------------------------------------------
 // Configuración general
 // ----------------------------------------------------------------------------
 const bool BUZZER_PASIVO   = true;              // P8: el buzzer es pasivo
+// Predicción de FC (versión 6). Ponlo en false para descartar que un fallo de TLS sea por memoria:
+// sin la predicción, el ESP32 recupera ~35 KB de heap.
+const bool PREDICCION_ACTIVA = true;
 
 // Pines
 const int PIN_SDA    = 21;
@@ -448,11 +470,13 @@ void detectarCaida() {
 #define LIMITE_LOTE  9800      // bytes: < 10 KB = se cobra como 2 mensajes, ~1.5 s de datos
 #define MAX_FILA     120       // bytes máximos de una fila
 #define TAM_SLOT     (LIMITE_LOTE + MAX_FILA)
-#define N_LOTES      5         // ~8 s de datos si se cae la conexión
+#define N_LOTES      3         // ~4.5 s de datos si se cae la conexión (v6: antes 5; los 19.8 KB
+                               // liberados los necesita el handshake TLS con la predicción activa)
 
 const char* TOPIC_DATA   = "bio/" THING_NAME "/data";
 const char* TOPIC_CMD    = "bio/" THING_NAME "/cmd";
 const char* TOPIC_STATUS = "bio/" THING_NAME "/status";
+const char* TOPIC_PRED   = "bio/" THING_NAME "/pred";     // respuesta de la Lambda
 const float G_A_MS2 = 9.80665;
 
 WiFiClientSecure awsNet;
@@ -477,6 +501,69 @@ int loteActual = -1;
 size_t largoLote = 0;
 int filasLote = 0;
 
+// --- bio/<thing>/vitals para el dashboard (versión 7) -------------------------
+// El núcleo 1 deja una instantánea (actualizarVitalsAWS) y el núcleo 0 la publica:
+// en cuanto cambia (máximo 1 por segundo) y, si no cambia, cada 5 s para mantener el
+// dashboard vivo. El semáforo es el mismo que pinta la pantalla: el dashboard no
+// recalcula umbrales.
+//   {"ts":1762900116724,"fc":72,"spo2":97,"dedo":true,"caida":false,"panico":false,"semaforo":"verde"}
+// ts = epoch en ms por NTP; 0 mientras no haya hora (el dashboard usa la de recepción).
+const char* TOPIC_VITALS = "bio/" THING_NAME "/vitals";
+const unsigned long VITALS_MIN_MS = 1000;
+const unsigned long VITALS_MAX_MS = 5000;
+
+struct Vitales {
+  int16_t fc, spo2;                // -1 = sin lectura válida (se publica null)
+  bool dedo, caida, panico;
+  char semaforo[9];                // "verde" | "amarillo" | "rojo"
+  // Miembro (no función libre): el preprocesador de Arduino pondría su prototipo antes del struct
+  bool igual(const Vitales& o) const {
+    return fc == o.fc && spo2 == o.spo2 && dedo == o.dedo && caida == o.caida &&
+           panico == o.panico && !strcmp(semaforo, o.semaforo);
+  }
+};
+portMUX_TYPE muxVitals = portMUX_INITIALIZER_UNLOCKED;
+Vitales vitalsCompartidos = { -1, -1, false, false, false, "amarillo" };
+volatile bool vitalsListos = false;                      // false hasta la primera instantánea
+volatile uint32_t awsVitalsEnviados = 0;
+
+// Epoch en ms; 0 si el reloj aún no se sincronizó por NTP (antes de 2020)
+uint64_t epochMs() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  if (tv.tv_sec < 1600000000) return 0;
+  return (uint64_t)tv.tv_sec * 1000ULL + tv.tv_usec / 1000;
+}
+
+// Núcleo 0: publica si cambió algo (≥ 1 s) o pasaron 5 s. `forzar` tras reconectar.
+void publicarVitals(bool forzar) {
+  static Vitales ultimo;
+  static unsigned long tUltimo = 0;
+  static bool hayUltimo = false;
+  if (!vitalsListos) return;
+
+  Vitales v;
+  portENTER_CRITICAL(&muxVitals);
+  v = vitalsCompartidos;
+  portEXIT_CRITICAL(&muxVitals);
+
+  unsigned long dt = millis() - tUltimo;
+  bool cambio = !hayUltimo || !v.igual(ultimo);
+  if (!forzar && !(cambio && dt >= VITALS_MIN_MS) && dt < VITALS_MAX_MS) return;
+
+  char fcTxt[8], spTxt[8], json[160];
+  if (v.fc < 0) strcpy(fcTxt, "null"); else snprintf(fcTxt, sizeof(fcTxt), "%d", v.fc);
+  if (v.spo2 < 0) strcpy(spTxt, "null"); else snprintf(spTxt, sizeof(spTxt), "%d", v.spo2);
+  int n = snprintf(json, sizeof(json),
+                   "{\"ts\":%llu,\"fc\":%s,\"spo2\":%s,\"dedo\":%s,\"caida\":%s,\"panico\":%s,\"semaforo\":\"%s\"}",
+                   (unsigned long long)epochMs(), fcTxt, spTxt, v.dedo ? "true" : "false",
+                   v.caida ? "true" : "false", v.panico ? "true" : "false", v.semaforo);
+  if (mqtt.publish(TOPIC_VITALS, (const uint8_t*)json, n, false)) {
+    ultimo = v; hayUltimo = true; tUltimo = millis();
+    awsVitalsEnviados++;
+  }
+}
+
 // --- Núcleo 0 -----------------------------------------------------------------
 // Extrae "campo": "valor" de un JSON simple (tolera espacios)
 String campoJSON(const String& json, const char* nombre) {
@@ -490,6 +577,7 @@ String campoJSON(const String& json, const char* nombre) {
 
 // Se ejecuta dentro de mqtt.loop(), en el núcleo 0: solo deja el comando pendiente
 void alRecibirAWS(char* topic, byte* payload, unsigned int n) {
+  if (strcmp(topic, TOPIC_PRED) == 0) { prediccionRecibir(payload, n); return; }   // FC prevista
   String msg;
   msg.reserve(n);
   for (unsigned int i = 0; i < n; i++) msg += (char)payload[i];
@@ -515,6 +603,7 @@ void conectarAWS() {
   if (mqtt.connect(THING_NAME, TOPIC_STATUS, 1, true, "offline")) {
     mqtt.publish(TOPIC_STATUS, "online", true);
     mqtt.subscribe(TOPIC_CMD, 1);
+    mqtt.subscribe(TOPIC_PRED, 0);
     Serial.println("[AWS] conectado");
     return;
   }
@@ -524,8 +613,10 @@ void conectarAWS() {
   if (mqtt.state() == -2) {
     char err[100] = "";
     int codigo = awsNet.lastError(err, sizeof(err));
-    Serial.printf(" | TLS %d (-0x%04X): %s | heap libre %u", codigo, (unsigned)-codigo, err,
-                  (unsigned)ESP.getFreeHeap());
+    // Para TLS importa el bloque contiguo más grande, no solo el total libre
+    Serial.printf(" | TLS %d (-0x%04X): %s | heap libre %u | bloque max %u | mínimo %u", codigo,
+                  (unsigned)-codigo, err, (unsigned)ESP.getFreeHeap(),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), (unsigned)ESP.getMinFreeHeap());
   }
   Serial.println();
 }
@@ -541,6 +632,7 @@ void tareaAWS(void* parametro) {
 
   unsigned long ultimoIntento = 0;
   bool primerIntento = true;
+  bool ntpIniciado = false;
   LoteListo pendiente;
   bool hayPendiente = false;
 
@@ -548,12 +640,18 @@ void tareaAWS(void* parametro) {
     awsWifi = (WiFi.status() == WL_CONNECTED);
     if (!awsWifi) { awsConectado = false; vTaskDelay(pdMS_TO_TICKS(500)); continue; }
 
+    if (!ntpIniciado) {                                  // hora UTC para el ts de vitals (asíncrono)
+      configTime(0, 0, "pool.ntp.org", "time.google.com");
+      ntpIniciado = true;
+    }
+
     if (!mqtt.connected()) {
       awsConectado = false;
       if (primerIntento || millis() - ultimoIntento > 5000) {
         primerIntento = false;
         ultimoIntento = millis();
         conectarAWS();                                   // bloquea 1-3 s, pero solo a este núcleo
+        if (mqtt.connected()) publicarVitals(true);      // el dashboard no espera 5 s
       }
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
@@ -561,6 +659,8 @@ void tareaAWS(void* parametro) {
 
     awsConectado = true;
     mqtt.loop();
+    prediccionPublicar(mqtt, THING_NAME);                // features listas (~230 bytes cada 2 s)
+    publicarVitals(false);                               // ~110 bytes, 1 Hz como máximo
     if (!hayPendiente) hayPendiente = (xQueueReceive(qListos, &pendiente, 0) == pdTRUE);
     if (hayPendiente &&
         mqtt.publish(TOPIC_DATA, (const uint8_t*)lotesMem[pendiente.idx], pendiente.largo, false)) {
@@ -718,6 +818,9 @@ void leerOximetro() {
     nMuestra++;
     ultimoIR = ir;
     capturarFila(rojo, ir);                                  // AWS: también sin dedo (IR bajo)
+    // Predicción: mismas unidades que el CSV del entrenamiento (m/s², rad/s).
+    // nMuestra nunca salta, así que el extractor no se reinicia.
+    prediccionPush(nMuestra, rojo, ir, ax * G_A_MS2, ay * G_A_MS2, az * G_A_MS2, gx, gy, gz);
 
     bool antes = hayDedo;
     if (!hayDedo && ir > IR_MIN_DEDO) hayDedo = true;
@@ -757,11 +860,52 @@ const char* semaforoFC() {
   return "rojo";
 }
 
+// La predicción solo ADELANTA el semáforo de FC: verde -> amarillo si la FC prevista pasa de 120
+bool fcPrevistaAlta() {
+  return hayDedo && fc > 0 && !strcmp(semaforoFC(), "verde") && prediccionAmarillo();
+}
+
+// Registra en la pantalla cuándo empieza y termina un aviso de FC prevista alta
+void procesarPrediccion() {
+  static bool antes = false;
+  bool ahora = fcPrevistaAlta();
+  if (ahora && !antes) registrarEvento("FC prevista alta: %.0f lpm en 10 s", prediccionFcPrevista());
+  else if (!ahora && antes) registrarEvento("FC prevista de vuelta en rango");
+  antes = ahora;
+}
+
 const char* semaforoSpO2() {
   if (!hayDedo || !spo2Valida) return "gris";
   if (spo2 >= SPO2_VERDE_MIN) return "verde";
   if (spo2 >= SPO2_AMARILLO_MIN) return "amarillo";
   return "rojo";
+}
+
+// Semáforo general para el dashboard: el peor entre FC (con el adelanto de la predicción,
+// igual que la pantalla) y SpO2. Sin ninguna lectura ("gris") se reporta "amarillo".
+// Las caídas y el pánico NO lo cambian: viajan aparte en "caida" y "panico".
+const char* semaforoGeneral() {
+  const char* sFc = fcPrevistaAlta() ? "amarillo" : semaforoFC();
+  const char* sSp = semaforoSpO2();
+  auto nivel = [](const char* s) { return !strcmp(s, "rojo") ? 3 : !strcmp(s, "amarillo") ? 2 : !strcmp(s, "verde") ? 1 : 0; };
+  const char* peor = nivel(sFc) >= nivel(sSp) ? sFc : sSp;
+  return nivel(peor) == 0 ? "amarillo" : peor;
+}
+
+// Núcleo 1: deja la instantánea que publica tareaAWS (copia breve bajo el mux)
+void actualizarVitalsAWS() {
+  Vitales v;
+  v.fc = (hayDedo && fc > 0) ? fc : -1;
+  v.spo2 = (hayDedo && spo2Valida) ? spo2 : -1;
+  v.dedo = hayDedo;
+  v.caida = estado == CONFIRMACION || (estado == ALARMA && !alarmaPorPanico);
+  v.panico = estado == ALARMA && alarmaPorPanico;
+  strncpy(v.semaforo, semaforoGeneral(), sizeof(v.semaforo) - 1);
+  v.semaforo[sizeof(v.semaforo) - 1] = 0;
+  portENTER_CRITICAL(&muxVitals);
+  vitalsCompartidos = v;
+  portEXIT_CRITICAL(&muxVitals);
+  vitalsListos = true;
 }
 
 // ============================================================================
@@ -770,7 +914,7 @@ const char* semaforoSpO2() {
 //   y   0- 23  Encabezado: "PulsoSeguro", estado de Wi-Fi/AWS y pico de aceleración
 //   y  28- 87  Estado: color según el estado, título grande y cuenta regresiva
 //   y  94-177  Dos tarjetas: FC y SpO2 con el color del semáforo
-//   y 184-213  Umbral de impacto (fijo)
+//   y 184-213  FC prevista a +10 s y umbral de impacto (versión 6)
 //   y 218-239  Último evento del registro
 // ============================================================================
 constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
@@ -860,7 +1004,7 @@ void textoDerecha(int xd, int y, const char* s, uint8_t tam, uint16_t color, uin
   texto(xd - (int)strlen(s) * 6 * tam, y, s, tam, color, fondo);
 }
 
-enum { R_ENCABEZADO, R_ESTADO, R_FC, R_SPO2, R_UMBRAL, R_EVENTO, NUM_REGIONES };
+enum { R_ENCABEZADO, R_ESTADO, R_FC, R_SPO2, R_PREDICCION, R_EVENTO, NUM_REGIONES };
 ContenidoRegion deseado[NUM_REGIONES], dibujado[NUM_REGIONES];
 bool regionInvalida[NUM_REGIONES];
 unsigned long dibujoMaxUs = 0;                           // para la prueba P19
@@ -927,13 +1071,19 @@ void calcularVista() {
   s.color = (s.fondo == C_AMARILLO) ? C_NEGRO : C_BLANCO;
 
   // Semáforo (R3)
-  calcularSigno(deseado[R_FC], semaforoFC(), fc, hayDedo && fc > 0);
+  bool adelantada = fcPrevistaAlta();
+  calcularSigno(deseado[R_FC], adelantada ? "amarillo" : semaforoFC(), fc, hayDedo && fc > 0);
+  if (adelantada) ponerTexto(deseado[R_FC].l2, sizeof(deseado[R_FC].l2), "Prev. alta");
   calcularSigno(deseado[R_SPO2], semaforoSpO2(), spo2, hayDedo && spo2Valida);
 
-  // Umbral de impacto (fijo desde la versión 5)
-  ContenidoRegion& p = deseado[R_UMBRAL];
-  p.fondo = C_FONDO; p.color = C_TEXTO;
-  ponerTexto(p.l1, sizeof(p.l1), "Umbral de impacto: %.2f g", UMBRAL_IMPACTO_G);
+  // FC prevista a +10 s (versión 6) y umbral de impacto (fijo desde la versión 5)
+  ContenidoRegion& p = deseado[R_PREDICCION];
+  p.fondo = C_FONDO;
+  p.color = prediccionAmarillo() ? C_AMARILLO : C_TEXTO;
+  float fp = prediccionFcPrevista();                     // NAN si no hay una vigente (< 10 s)
+  if (!isnan(fp)) ponerTexto(p.l1, sizeof(p.l1), "FC en 10 s: %.0f lpm", fp);
+  else ponerTexto(p.l1, sizeof(p.l1), "FC en 10 s: --");
+  ponerTexto(p.l2, sizeof(p.l2), "Umbral de impacto: %.2f g", UMBRAL_IMPACTO_G);
 
   // Último evento (dos renglones de 52 caracteres)
   ContenidoRegion& v = deseado[R_EVENTO];
@@ -988,10 +1138,14 @@ void dibujarSigno(int x, const char* titulo, const ContenidoRegion& n, const Con
   }
 }
 
-void dibujarUmbral(const ContenidoRegion& n, const ContenidoRegion& v, bool completo) {
-  if (completo || strcmp(n.l1, v.l1)) {
-    tft.fillRect(4, 188, 312, 20, n.fondo);
-    textoCentrado(160, 190, n.l1, 2, n.color, n.fondo);
+void dibujarPrediccion(const ContenidoRegion& n, const ContenidoRegion& v, bool completo) {
+  if (completo || strcmp(n.l1, v.l1)) {                   // y 184-201: FC prevista (tamaño 2)
+    tft.fillRect(4, 184, 312, 18, n.fondo);
+    textoCentrado(160, 186, n.l1, 2, n.color, n.fondo);
+  }
+  if (completo || strcmp(n.l2, v.l2)) {                   // y 204-213: umbral (tamaño 1)
+    tft.fillRect(4, 204, 312, 10, n.fondo);
+    textoCentrado(160, 205, n.l2, 1, C_SUB, n.fondo);
   }
 }
 
@@ -1013,7 +1167,7 @@ void dibujarRegion(int i) {
     case R_ESTADO:     dibujarEstado(n, v, completo); break;
     case R_FC:         dibujarSigno(4,   "FC (lpm)", n, v, completo); break;
     case R_SPO2:       dibujarSigno(162, "SpO2 (%)", n, v, completo); break;
-    case R_UMBRAL:     dibujarUmbral(n, v, completo); break;
+    case R_PREDICCION: dibujarPrediccion(n, v, completo); break;
     case R_EVENTO:     dibujarEvento(n, v, completo); break;
   }
   dibujado[i] = n;
@@ -1090,11 +1244,19 @@ void imprimirResumen() {
                 hayDedo ? "SI" : "NO", (unsigned long)ultimoIR,
                 magnitudG, UMBRAL_IMPACTO_G,
                 dibujoMaxUs / 1000.0, cicloMaxUs / 1000.0);
-  Serial.printf("            AWS: wifi %s | mqtt %s | captura %s (%lu muestras) | lotes enviados %lu | descartadas %lu | intentos %lu | heap %u\n",
-                awsWifi ? "OK" : "--", awsConectado ? "OK" : "--", capturando ? "SI" : "NO",
+  Serial.printf("            AWS: wifi %s | mqtt %s | hora %s | vitals %lu | captura %s (%lu muestras) | lotes enviados %lu | descartadas %lu | intentos %lu | heap %u (bloque max %u, mínimo %u)\n",
+                awsWifi ? "OK" : "--", awsConectado ? "OK" : "--", epochMs() ? "NTP" : "--",
+                (unsigned long)awsVitalsEnviados, capturando ? "SI" : "NO",
                 (unsigned long)seqCaptura, (unsigned long)awsLotesEnviados,
                 (unsigned long)awsMuestrasDescartadas, (unsigned long)awsIntentos,
-                (unsigned)ESP.getFreeHeap());
+                (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                (unsigned)ESP.getMinFreeHeap());
+  pred::Estadisticas pe = prediccionEstadisticas();
+  float fp = prediccionFcPrevista();
+  Serial.printf("            PRED: ventanas %lu (válidas %lu) | features enviadas %lu | descartadas %lu | respuestas %lu | FC en 10 s %s | cálculo max %.1f ms | pila libre %lu B\n",
+                (unsigned long)pe.ventanas, (unsigned long)pe.validas, (unsigned long)pe.enviadas,
+                (unsigned long)pe.descartadas, (unsigned long)pe.recibidas,
+                isnan(fp) ? "--" : String(fp, 0).c_str(), pe.calcMaxUs / 1000.0, (unsigned long)pe.pilaLibre);
   dibujoMaxUs = 0;
   cicloMaxUs = 0;
 }
@@ -1105,7 +1267,14 @@ void imprimirResumen() {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n===== PulsoSeguro (versión 5: pantalla TFT + AWS IoT, sin AP) =====");
+  Serial.println("\n===== PulsoSeguro (versión 6: pantalla TFT + AWS IoT + predicción de FC) =====");
+
+  // Predicción: ~31 KB en el heap. Se reserva primero, antes de Wi-Fi y TLS, para encontrar
+  // un bloque contiguo. Si no hay memoria, todo lo demás funciona igual, sin FC prevista.
+  bool prediccionOK = PREDICCION_ACTIVA && prediccionInit();   // tarea "features" en el núcleo 0
+  Serial.printf("Predicción de FC: %s | heap libre %u | bloque max %u\n",
+                prediccionOK ? "OK" : (PREDICCION_ACTIVA ? "SIN MEMORIA" : "DESACTIVADA"),
+                (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
   pinMode(PIN_BOTON, INPUT_PULLUP);
 
@@ -1131,6 +1300,7 @@ void setup() {
   buzzerTono(2000); delay(120); buzzerTono(0);
 
   registrarEvento("Sistema iniciado");
+  if (PREDICCION_ACTIVA && !prediccionOK) registrarEvento("Predicción desactivada: sin memoria");
   cambiarEstado(NORMAL);
   mostrarInterfaz();
 }
@@ -1148,5 +1318,7 @@ void loop() {
   actualizarBuzzer();
   actualizarPantalla();        // TFT: una región por vuelta, como máximo
   procesarComandosAWS();       // start / stop recibidos por MQTT
+  procesarPrediccion();        // evento al empezar/terminar un aviso de FC prevista alta
+  actualizarVitalsAWS();       // instantánea para bio/<thing>/vitals (la publica el núcleo 0)
   imprimirResumen();
-}
+}

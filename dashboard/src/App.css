@@ -1,0 +1,1085 @@
+/* ---------- Estructura ---------- */
+.app {
+  min-height: 100svh;
+}
+
+.encabezado {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 24px;
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borde);
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+  font-size: 1.05rem;
+}
+
+.marca-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--critico);
+  color: #fff;
+}
+
+.marca-logo-grande {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+}
+
+.selector-thing select {
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--borde);
+  background: var(--superficie-2);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+
+.thing-unico {
+  font-size: 0.85rem;
+}
+
+.usuario {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.usuario-email {
+  color: var(--texto-2);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contenido {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---------- Cuadrícula editable (react-grid-layout) ---------- */
+.cuadricula-paneles {
+  position: relative;
+  /* La cuadrícula ocupa todo el ancho; react-grid-layout pone las posiciones. */
+  margin: 0 -2px;
+  padding: 0 2px;
+}
+
+.celda {
+  display: flex;
+  flex-direction: column;
+}
+
+.celda-contenido {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Las tarjetas escalan texto e ilustración según el tamaño de su celda (unidades cqw/cqh). */
+  container-type: size;
+}
+
+/* Cada panel o tarjeta llena su celda; si el contenido no cabe, se desplaza. */
+.celda-contenido > .panel,
+.celda-contenido > .tarjeta {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Tarjeta: título arriba, valor al centro y pie abajo, aunque la celda sea alta. */
+.celda-contenido > .tarjeta {
+  justify-content: space-between;
+}
+
+/* Paneles con contenido elástico: gráficas, onda PPG, lista de eventos. */
+.panel-lleno > .grafica-llena,
+.panel-lleno > .ppg-llena,
+.panel-lleno > .eventos {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.panel-lleno > .grafica-llena {
+  min-height: 150px;
+}
+
+.grafica-llena .grafica-lienzo {
+  flex: 1;
+  min-height: 100px;
+}
+
+/* El SVG/canvas no debe empujar el alto de su contenedor (se mide y se dibuja a ese tamaño). */
+.grafica-llena .grafica-lienzo svg,
+.ppg-llena canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.grafica-llena .tabla-scroll {
+  flex: 1;
+  min-height: 100px;
+}
+
+.ppg-llena {
+  position: relative;
+}
+
+.panel-lleno > .ppg-llena {
+  min-height: 80px;
+}
+
+.panel-lleno > .eventos {
+  max-height: none;
+  overflow: auto;
+}
+
+.react-grid-item.react-grid-placeholder {
+  background: var(--acento);
+  opacity: 0.15;
+  border-radius: var(--radio);
+}
+
+/* Modo edición: el panel entero se arrastra, su contenido no responde a clics. */
+.cuadricula-paneles.editando .celda {
+  cursor: grab;
+  border-radius: var(--radio);
+  outline: 2px dashed color-mix(in srgb, var(--acento) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.cuadricula-paneles.editando .celda-contenido {
+  pointer-events: none;
+  user-select: none;
+}
+
+.cuadricula-paneles.editando .react-draggable-dragging {
+  cursor: grabbing;
+  z-index: 5;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+
+.celda-etiqueta {
+  position: absolute;
+  top: -10px;
+  left: 12px;
+  z-index: 2;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--acento);
+  color: var(--acento-texto);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Asas de redimensionar visibles y con color del tema mientras se edita. */
+.cuadricula-paneles.editando .react-grid-item > .react-resizable-handle {
+  opacity: 1;
+}
+
+.cuadricula-paneles.editando .react-grid-item > .react-resizable-handle::after {
+  border-color: var(--acento);
+}
+
+.aviso-edicion {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px dashed var(--acento);
+  background: color-mix(in srgb, var(--acento) 8%, var(--superficie));
+  font-size: 0.88rem;
+}
+
+.barra-acciones {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.barra-accion {
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 600px) {
+  .encabezado {
+    padding: 10px 16px;
+    flex-wrap: wrap;
+  }
+  .contenido {
+    padding: 16px 16px 40px;
+  }
+  .usuario-email {
+    display: none;
+  }
+}
+
+/* ---------- Paneles y tarjetas ---------- */
+.panel,
+.tarjeta {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio);
+  box-shadow: var(--sombra);
+}
+
+.panel {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.panel-encabezado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.panel-titulo {
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.tarjeta {
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity 0.3s;
+}
+
+.tarjeta.vieja .valor {
+  opacity: 0.45;
+}
+
+.tarjeta-titulo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 550;
+  color: var(--texto-2);
+}
+
+.valor {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.numero {
+  font-size: clamp(2.6rem, min(30cqh, 15cqw), 6.5rem);
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.valor .unidad {
+  color: var(--texto-2);
+  font-size: 1rem;
+}
+
+.valor-texto {
+  font-size: clamp(1.35rem, min(15cqh, 8cqw), 3rem);
+  font-weight: 600;
+  min-height: 2.86rem;
+  align-items: center;
+}
+
+.tarjeta-pie {
+  color: var(--texto-3);
+  font-size: 0.85rem;
+}
+
+.tarjeta-pie strong {
+  color: var(--texto);
+}
+
+.tendencia {
+  color: var(--texto-2);
+}
+
+/* Estado general: el color acompaña al ícono y al texto, nunca va solo. */
+.estado-valor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: clamp(1.6rem, min(18cqh, 9cqw), 3.4rem);
+  font-weight: 650;
+  min-height: 2.86rem;
+}
+
+/* Tarjetas con tono (Estado general, Sensor). En estado normal (.estado-bien) se ven
+   como cualquier otra tarjeta: solo el ícono ✓ lleva el verde. Con una anomalía
+   (naranja = precaución, rojo = crítico, gris = sin datos) la tarjeta entera se tiñe. */
+.tarjeta-tono {
+  --tono: var(--neutro);
+  --tono-texto: var(--texto-3);
+  --tono-fondo: var(--superficie);
+  transition:
+    background-color 0.4s,
+    border-color 0.4s;
+}
+.tarjeta-tono.estado-precaucion {
+  --tono: var(--naranja);
+  --tono-texto: var(--naranja-texto);
+  --tono-fondo: var(--naranja-fondo);
+}
+.tarjeta-tono.estado-critico {
+  --tono: var(--critico);
+  --tono-texto: var(--critico-texto);
+  --tono-fondo: var(--critico-fondo);
+}
+.tarjeta-tono:not(.estado-bien) {
+  border-color: color-mix(in srgb, var(--tono) 40%, var(--borde));
+  background: var(--tono-fondo);
+}
+.tarjeta-tono:not(.estado-bien) .estado-valor,
+.tarjeta-tono:not(.estado-bien) .valor-texto,
+.tarjeta-tono:not(.estado-bien) .tarjeta-titulo {
+  color: var(--tono-texto);
+}
+.tarjeta-tono:not(.estado-bien) .tarjeta-pie {
+  color: color-mix(in srgb, var(--tono-texto) 70%, var(--texto-2));
+}
+.tarjeta-estado:not(.estado-bien) {
+  border-left: 5px solid var(--tono);
+}
+.tarjeta-tono.estado-bien .estado-valor svg,
+.tarjeta-tono.estado-bien .valor-texto svg {
+  color: var(--bien-texto);
+}
+
+.valor-texto {
+  gap: 8px;
+}
+
+/* Los íconos de estado crecen con el texto. */
+.estado-valor svg,
+.valor-texto svg {
+  width: 0.9em;
+  height: 0.9em;
+  flex: none;
+}
+
+/* Tarjeta con ilustración animada a la derecha (corazón, burbujas); la ilustración
+   crece con la tarjeta. */
+.tarjeta-ilustrada {
+  --tam-ilus: clamp(56px, min(55cqh, 30cqw), 220px);
+  position: relative;
+  padding-right: calc(var(--tam-ilus) + 30px);
+}
+
+.tarjeta-ilustracion {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  width: var(--tam-ilus);
+  height: var(--tam-ilus);
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+}
+
+.tarjeta-ilustracion > .corazon,
+.tarjeta-ilustracion > .burbujas {
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- Corazón latiendo ---------- */
+.corazon {
+  --duracion-latido: 1000ms;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.corazon-svg {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 3px 6px rgb(196 45 45 / 0.35));
+  transform-origin: 50% 60%;
+}
+
+.corazon-onda {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  border: 2px solid var(--critico);
+  opacity: 0;
+}
+
+.corazon.latiendo .corazon-svg {
+  animation: latido var(--duracion-latido) ease-in-out infinite;
+}
+
+.corazon.latiendo .corazon-onda {
+  animation: onda-latido var(--duracion-latido) ease-out infinite;
+}
+
+.corazon.detenido {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+/* "Lub-dub": dos contracciones seguidas y un reposo. */
+@keyframes latido {
+  0%,
+  45%,
+  100% {
+    transform: scale(1);
+  }
+  12% {
+    transform: scale(1.16);
+  }
+  24% {
+    transform: scale(0.98);
+  }
+  34% {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes onda-latido {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.55;
+  }
+  60%,
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+/* Con "reducir movimiento" (p. ej. Windows con los efectos de animación apagados) no hay
+   cambio de tamaño ni onda: el corazón solo cambia de brillo al mismo ritmo. */
+@keyframes latido-suave {
+  0%,
+  45%,
+  100% {
+    opacity: 1;
+  }
+  15% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .corazon.latiendo .corazon-svg {
+    animation: latido-suave var(--duracion-latido) ease-in-out infinite;
+  }
+  .corazon.latiendo .corazon-onda {
+    animation: none;
+  }
+}
+
+/* ---------- Burbujas de oxigenación ---------- */
+.burbujas svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 3px 6px rgb(28 92 171 / 0.3));
+}
+
+.burbujas-cielo {
+  fill: color-mix(in srgb, #6db7f2 28%, var(--superficie));
+}
+
+.burbujas-borde {
+  fill: none;
+  stroke: #2a78d6;
+  stroke-width: 2;
+}
+
+.burbuja {
+  fill: rgb(255 255 255 / 0.3);
+  stroke: #fff;
+  stroke-width: 1.2;
+  opacity: 0;
+}
+
+/* La superficie avanza un periodo de ola (32 unidades) y se repite sin saltos. */
+.burbujas.activas .burbujas-ola {
+  animation: ola 3s linear infinite;
+}
+
+.burbujas.activas .burbuja {
+  animation: subir var(--dur) ease-in var(--retraso) infinite;
+}
+
+.burbujas.detenidas {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+@keyframes ola {
+  to {
+    transform: translateX(32px);
+  }
+}
+
+/* Sube desde el fondo, se mece un poco y desaparece al llegar a la superficie (y≈16). */
+@keyframes subir {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  35% {
+    transform: translate(2px, -15px);
+  }
+  65% {
+    transform: translate(-2px, -30px);
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(1px, -44px) scale(1.25);
+    opacity: 0;
+  }
+}
+
+/* Con "reducir movimiento": burbujas quietas que aparecen y desaparecen en su sitio. */
+@keyframes burbuja-suave {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .burbujas.activas .burbujas-ola {
+    animation: none;
+  }
+  .burbujas.activas .burbuja {
+    transform: translateY(var(--quieta));
+    animation: burbuja-suave var(--dur) ease-in-out var(--retraso) infinite;
+  }
+}
+
+/* ---------- Barra de estado e insignias ---------- */
+.barra-estado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.insignia {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  font-size: 0.85rem;
+  color: var(--texto-2);
+}
+
+.insignia .punto {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neutro);
+}
+
+.insignia.estado-bien .punto {
+  background: var(--bien);
+}
+.insignia.estado-aviso .punto {
+  background: var(--aviso);
+}
+.insignia.estado-critico .punto {
+  background: var(--critico);
+}
+
+.barra-texto {
+  color: var(--texto-3);
+  font-size: 0.85rem;
+}
+
+/* ---------- Avisos ---------- */
+.aviso {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--aviso);
+  background: var(--aviso-fondo);
+  font-size: 0.9rem;
+}
+
+.aviso-error {
+  border-color: var(--critico);
+  background: var(--critico-fondo);
+}
+
+.alerta-caida {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: var(--radio);
+  background: var(--critico);
+  color: #fff;
+  animation: pulso 1.4s ease-in-out infinite;
+}
+
+.alerta-caida strong {
+  font-size: 1.25rem;
+}
+
+@keyframes pulso {
+  50% {
+    box-shadow: 0 0 0 6px rgb(208 59 59 / 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alerta-caida {
+    animation: none;
+  }
+}
+
+.error-linea {
+  color: var(--critico-texto);
+  font-size: 0.9rem;
+}
+
+.vacio {
+  color: var(--texto-3);
+  font-size: 0.9rem;
+}
+
+/* ---------- Gráficas ---------- */
+.grafica {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.grafica-encabezado {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.grafica-encabezado h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.grafica-encabezado .unidad {
+  color: var(--texto-3);
+  font-weight: 400;
+}
+
+.leyenda {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.82rem;
+  color: var(--texto-2);
+}
+
+.leyenda li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grafica-encabezado .boton-texto {
+  margin-left: auto;
+}
+
+.grafica-lienzo {
+  position: relative;
+  width: 100%;
+  touch-action: pan-y;
+}
+
+.grafica-lienzo svg {
+  display: block;
+  overflow: visible;
+}
+
+.rejilla {
+  stroke: var(--rejilla);
+  stroke-width: 1;
+}
+
+.eje {
+  fill: var(--eje);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+
+.marca-ahora {
+  stroke: var(--texto-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.cursor {
+  stroke: var(--texto-3);
+  stroke-width: 1;
+}
+
+.punto-cursor {
+  stroke: var(--superficie);
+  stroke-width: 2;
+}
+
+.superpuesto {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.tooltip {
+  position: absolute;
+  transform: translateX(-50%);
+  min-width: 140px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  font-size: 0.82rem;
+  pointer-events: none;
+}
+
+.tooltip-hora {
+  color: var(--texto-3);
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip-fila {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--texto-2);
+}
+
+.tooltip-fila strong {
+  margin-left: auto;
+  color: var(--texto);
+  font-variant-numeric: tabular-nums;
+}
+
+.muestra {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.ppg-lienzo {
+  width: 100%;
+  border-radius: 8px;
+  background: var(--superficie-2);
+  overflow: hidden;
+}
+
+.ppg-lienzo canvas {
+  display: block;
+}
+
+/* ---------- Tablas ---------- */
+.tabla-scroll {
+  overflow: auto;
+}
+
+.tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.tabla th,
+.tabla td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--borde);
+  text-align: left;
+}
+
+.tabla th {
+  position: sticky;
+  top: 0;
+  background: var(--superficie);
+  color: var(--texto-2);
+  font-weight: 550;
+}
+
+.tabla .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Eventos ---------- */
+.eventos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.evento {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borde);
+  font-size: 0.88rem;
+}
+
+.evento:last-child {
+  border-bottom: 0;
+}
+
+.evento-icono {
+  display: flex;
+  padding-top: 2px;
+}
+
+.evento-critico .evento-icono {
+  color: var(--critico);
+}
+.evento-aviso .evento-icono {
+  color: var(--aviso-texto);
+}
+.evento-info .evento-icono {
+  color: var(--texto-3);
+}
+.evento-bien .evento-icono {
+  color: var(--bien-texto);
+}
+
+.evento-critico .evento-texto {
+  font-weight: 600;
+}
+
+.evento-hora {
+  color: var(--texto-3);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Controles ---------- */
+.boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--borde);
+  background: var(--superficie-2);
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.boton:hover:not(:disabled) {
+  border-color: var(--texto-3);
+}
+
+.boton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.boton-primario {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: var(--acento-texto);
+}
+
+.boton-peligro {
+  background: var(--critico);
+  border-color: var(--critico);
+  color: #fff;
+}
+
+.boton-texto-icono {
+  background: transparent;
+  padding: 5px 10px;
+}
+
+.boton-texto {
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  color: var(--acento);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.segmentado {
+  display: inline-flex;
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmentado button {
+  border: 0;
+  border-right: 1px solid var(--borde);
+  background: var(--superficie);
+  padding: 4px 11px;
+  font-size: 0.85rem;
+  color: var(--texto-2);
+  cursor: pointer;
+}
+
+.segmentado button:last-child {
+  border-right: 0;
+}
+
+.segmentado button[aria-pressed="true"] {
+  background: var(--superficie-2);
+  color: var(--texto);
+  font-weight: 600;
+}
+
+.interruptor {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.interruptor input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--acento);
+}
+
+.formulario {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+
+.formulario label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--texto-2);
+}
+
+.formulario input {
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--borde);
+  background: var(--superficie-2);
+  color: var(--texto);
+  min-width: 0;
+}
+
+.formulario-nota {
+  grid-column: 1 / -1;
+}
+
+.grabando {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.punto-grabando {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--critico);
+  animation: parpadeo 1s steps(2) infinite;
+}
+
+@keyframes parpadeo {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.panel-demo {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  border-style: dashed;
+  font-size: 0.9rem;
+}
+
+.acciones-demo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- Login ---------- */
+.pantalla-centrada {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.tarjeta-login {
+  width: min(100%, 400px);
+  padding: 32px;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.tarjeta-login p {
+  color: var(--texto-2);
+}

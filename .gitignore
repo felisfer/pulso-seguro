@@ -8,12 +8,15 @@ certs/
 *.key
 *.crt
 .env
+.env.production
 
 # --- Datos de sesiones (información de personas) ---
 datos/
 dataset.csv
 *.parquet
 salida_fc/
+*.exe
+*.pdb
 
 # --- Python ---
 __pycache__/
