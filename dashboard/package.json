@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "mqtt": "^5.16.1",
     "oidc-client-ts": "^3.5.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

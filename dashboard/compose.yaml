@@ -1,0 +1,27 @@
+# Uso:
+#   docker compose up --build dashboard       # producción (nginx) en http://localhost:8080
+#   docker compose up --build dashboard-dev   # Vite con recarga en http://localhost:5173
+#
+# Producción: la configuración se toma de ./.env.production al compilar (ver Dockerfile).
+# Desarrollo: el contenedor lee ./.env (env_file) y Vite lo aplica al arrancar.
+
+services:
+  dashboard:
+    build:
+      context: .
+      target: production
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  dashboard-dev:
+    build:
+      context: .
+      target: development
+    env_file: .env
+    ports:
+      - "${PORT:-5173}:${PORT:-5173}"
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./index.html:/app/index.html

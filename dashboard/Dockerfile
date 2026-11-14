@@ -20,6 +20,11 @@ RUN corepack enable pnpm && pnpm install --frozen-lockfile
 # ===== STAGE 3: Build =====
 FROM base AS build
 
+# Vite incrusta las VITE_* al compilar leyendo .env.production, que sí entra al
+# contexto (está en .gitignore pero no en .dockerignore). No declares aquí ARG/ENV
+# VITE_*: Vite da prioridad al entorno del proceso y, aunque estén vacías, pisan
+# los valores de .env.production.
+
 WORKDIR /app
 
 COPY --from=dependencies /app/node_modules ./node_modules
