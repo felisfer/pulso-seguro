@@ -29,11 +29,13 @@ export function TarjetasVitales({ vitals, pred, ahora }: Props) {
   const sem = vitals ? SEMAFORO[vitals.semaforo] : null
   // Solo muestra la predicción si es reciente (la Lambda publica cada 2 s).
   const predVigente = pred && ahora - pred.ts < 15_000 ? pred : null
+  // Verde con contacto, rojo sin contacto; neutro si no hay datos recientes.
+  const claseSensor = !vitals || viejo ? "estado-neutro" : vitals.dedo ? "estado-bien" : "estado-critico"
   const delta = predVigente && vitals?.fc != null ? predVigente.fc_pred - vitals.fc : null
 
   return (
     <section className="tarjetas" aria-label="Signos vitales actuales">
-      <article className={`tarjeta tarjeta-estado ${sem && !viejo ? sem.clase : "estado-neutro"}`}>
+      <article className={`tarjeta tarjeta-tono tarjeta-estado ${sem && !viejo ? sem.clase : "estado-neutro"}`}>
         <h2 className="tarjeta-titulo">Estado general</h2>
         <div className="estado-valor">
           {sem ? sem.icono : <IconoInfo tam={22} />}
@@ -78,11 +80,14 @@ export function TarjetasVitales({ vitals, pred, ahora }: Props) {
         <p className="tarjeta-pie">{pie}</p>
       </article>
 
-      <article className={`tarjeta ${viejo ? "vieja" : ""}`}>
+      <article className={`tarjeta tarjeta-tono ${claseSensor}`}>
         <h2 className="tarjeta-titulo">
           <IconoMano /> Sensor
         </h2>
-        <p className="valor valor-texto">{vitals ? (vitals.dedo ? "Con contacto" : "Sin contacto") : "—"}</p>
+        <p className="valor valor-texto">
+          {vitals && !viejo && (vitals.dedo ? <IconoOk tam={22} /> : <IconoAlerta tam={22} />)}
+          {vitals ? (vitals.dedo ? "Con contacto" : "Sin contacto") : "—"}
+        </p>
         <p className="tarjeta-pie">{vitals && !vitals.dedo ? "Ajusta la pulsera: no detecta la piel" : pie}</p>
       </article>
     </section>

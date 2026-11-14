@@ -140,5 +140,8 @@ export function crearTransporteDemo(thing: string, eventos: EventosTransporte): 
     simularCaida() {
       caidaHasta = Date.now() + 15_000
     },
+    simularSinContacto() {
+      sinDedoHasta = Date.now() + 10_000
+    },
   }
 }

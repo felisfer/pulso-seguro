@@ -131,9 +131,14 @@ export function Monitor({ thing, idToken }: Props) {
             <strong>Modo demo:</strong> los datos son simulados en el navegador con el mismo formato que los tópicos{" "}
             <code>vitals</code>, <code>pred</code> y <code>data</code>.
           </p>
-          <button type="button" className="boton" onClick={tel.simularCaida}>
-            Simular caída
-          </button>
+          <div className="acciones-demo">
+            <button type="button" className="boton" onClick={tel.simularSinContacto}>
+              Simular sin contacto
+            </button>
+            <button type="button" className="boton" onClick={tel.simularCaida}>
+              Simular caída
+            </button>
+          </div>
         </section>
       )}
     </>
