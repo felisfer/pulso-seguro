@@ -363,6 +363,96 @@
   }
 }
 
+/* ---------- Burbujas de oxigenación ---------- */
+.burbujas svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 3px 6px rgb(28 92 171 / 0.3));
+}
+
+.burbujas-cielo {
+  fill: color-mix(in srgb, #6db7f2 28%, var(--superficie));
+}
+
+.burbujas-borde {
+  fill: none;
+  stroke: #2a78d6;
+  stroke-width: 2;
+}
+
+.burbuja {
+  fill: rgb(255 255 255 / 0.3);
+  stroke: #fff;
+  stroke-width: 1.2;
+  opacity: 0;
+}
+
+/* La superficie avanza un periodo de ola (32 unidades) y se repite sin saltos. */
+.burbujas.activas .burbujas-ola {
+  animation: ola 3s linear infinite;
+}
+
+.burbujas.activas .burbuja {
+  animation: subir var(--dur) ease-in var(--retraso) infinite;
+}
+
+.burbujas.detenidas {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+@keyframes ola {
+  to {
+    transform: translateX(32px);
+  }
+}
+
+/* Sube desde el fondo, se mece un poco y desaparece al llegar a la superficie (y≈16). */
+@keyframes subir {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  35% {
+    transform: translate(2px, -15px);
+  }
+  65% {
+    transform: translate(-2px, -30px);
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(1px, -44px) scale(1.25);
+    opacity: 0;
+  }
+}
+
+/* Con "reducir movimiento": burbujas quietas que aparecen y desaparecen en su sitio. */
+@keyframes burbuja-suave {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .burbujas.activas .burbujas-ola {
+    animation: none;
+  }
+  .burbujas.activas .burbuja {
+    transform: translateY(var(--quieta));
+    animation: burbuja-suave var(--dur) ease-in-out var(--retraso) infinite;
+  }
+}
+
 /* ---------- Barra de estado e insignias ---------- */
 .barra-estado {
   display: flex;

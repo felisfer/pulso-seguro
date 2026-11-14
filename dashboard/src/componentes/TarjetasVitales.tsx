@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import type { VitalsRecibidos } from "../telemetria/estado"
 import type { Prediccion, Semaforo } from "../tipos"
 import { haceCuanto } from "../utilidades/tiempo"
+import { BurbujasOxigeno } from "./BurbujasOxigeno"
 import { CorazonLatiendo } from "./CorazonLatiendo"
 import { IconoAlerta, IconoCorazon, IconoGota, IconoInfo, IconoMano, IconoOk } from "./Iconos"
 
@@ -73,7 +74,7 @@ export function TarjetasVitales({ vitals, pred, ahora }: Props) {
         </p>
       </article>
 
-      <article className={`tarjeta ${viejo ? "vieja" : ""}`}>
+      <article className={`tarjeta tarjeta-ilustrada ${viejo ? "vieja" : ""}`}>
         <h2 className="tarjeta-titulo">
           <IconoGota /> SpO₂
         </h2>
@@ -81,6 +82,9 @@ export function TarjetasVitales({ vitals, pred, ahora }: Props) {
           <span className="numero">{vitals?.spo2 ?? "—"}</span>
           <span className="unidad">%</span>
         </p>
+        <div className="tarjeta-ilustracion">
+          <BurbujasOxigeno activo={!viejo && vitals?.spo2 != null} />
+        </div>
         <p className="tarjeta-pie">{pie}</p>
       </article>
 
