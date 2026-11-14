@@ -20,12 +20,24 @@ export interface Vitals {
   semaforo: Semaforo
 }
 
-/** `bio/<thing>/pred` · JSON cada 2 s, publicado por la Lambda. */
+/**
+ * `bio/<thing>/pred` · JSON cada 2 s, publicado por la Lambda (lambda/src/lambda_function.py).
+ * El mismo mensaje lo lee el ESP32 (`win`, `fc_prevista`, `semaforo`).
+ */
 export interface Prediccion {
+  /** `timestamp()` de la IoT Rule en ms (cuándo llegaron las features). */
   ts: number
+  /** FC prevista a `horizonte_s` (igual a `fc_prevista`). */
   fc_pred: number
   horizonte_s: number
+  /** Versión del modelo. */
   modelo: string
+  /** FC de la ventana con la que se predijo. */
+  fc?: number
+  /** Solo por FC prevista: "amarillo" si pasa de 120, si no "verde". */
+  semaforo?: Semaforo
+  /** "ridge" o "media3" (línea base). */
+  usado?: string
 }
 
 /** `bio/<thing>/cmd` · JSON publicado por el dashboard (opcional). */

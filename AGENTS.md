@@ -2,7 +2,7 @@
 
 Guía para agentes de código (Claude Code, Codex, Copilot, etc.) que trabajen en este repositorio: qué es el proyecto, en qué estado está, cómo se ejecuta y qué reglas seguir. La documentación para personas está en [`README.md`](README.md).
 
-_Última actualización: 2026-11-14 (rama `feature/dashboard-ui`)._
+_Última actualización: 2026-11-14 (rama `feature/dashboard`)._
 
 ## 1. Qué es
 
@@ -21,13 +21,15 @@ pulso-seguro/
 
 | Componente | Estado |
 |---|---|
-| Firmware v5 (`firmware/pulso_seguro_aws`) | 🟡 Compila; falta validarlo en la placa |
+| Firmware v7 (`firmware/pulso_seguro_aws`): features → Lambda, `pred`, `vitals` | 🟡 Compila (core esp32 3.3.12, *Huge APP*); falta validarlo en la placa |
 | Captura a AWS IoT → S3 (`bio/<thing>/data`, `status`, `cmd`) | ✅ Funciona con datos reales |
 | `cargar_s3.py`, `control.py` | ✅ Funcionan |
 | Modelo de FC | 🟡 Pipeline listo; **no supera a la persistencia** por falta de datos con transiciones |
 | **Dashboard web** | ✅ Completo en **modo demo**; login con Cognito funciona (incluido el logout); ⏳ **sin conectar a AWS IoT** |
-| Tópico `bio/<thing>/vitals` en el firmware | ⏳ No existe todavía |
-| Lambda de predicción → `bio/<thing>/pred` + DynamoDB + API del historial | ⏳ No existe todavía |
+| Tópico `bio/<thing>/vitals` en el firmware | 🟡 Implementado (al cambiar, máx. 1 Hz; mín. cada 5 s; ts por NTP) |
+| Lambda de predicción → `bio/<thing>/pred` + DynamoDB (`lambda/`, `infra/`, ver `README_prediccion.md`) | 🟡 Probada con moto; falta desplegarla |
+| API del historial (`GET /predicciones`) | ⏳ No existe todavía |
+| Modelo reentrenado con el extractor nuevo (`modelo/exportar_modelo.py`) | ⏳ Falta con `dataset.csv` real |
 
 ### Dashboard: lo que ya está hecho
 
@@ -42,8 +44,8 @@ pulso-seguro/
 ### Pendiente (en orden)
 
 1. **AWS** (el usuario lo hace en la consola; los pasos están en el README, sección «Configuración de AWS para el dashboard»): Identity Pool, rol IAM autenticado, política IoT `dashboard-policy` adjunta a cada identidad, y `VITE_IDENTITY_POOL_ID` / `VITE_IOT_ENDPOINT` / `VITE_THING_NAMES`.
-2. **Firmware**: publicar `vitals` a 1 Hz desde la tarea MQTT del núcleo 0 (necesita hora por NTP).
-3. **Lambda**: publicar `pred` y guardar en DynamoDB; API Gateway `GET /predicciones?thing=&desde=&hasta=`.
+2. **Firmware**: probar v7 en la placa (features, `/pred`, `vitals`, heap libre). La política IoT del dispositivo debe permitir publicar en `bio/<thing>/vitals` y `bio/<thing>/features`, y suscribirse a `bio/<thing>/pred`.
+3. **Lambda**: reentrenar, desplegar con `infra/desplegar.ps1`; después, API Gateway `GET /predicciones?thing=&desde=&hasta=`.
 4. Probar el dashboard con la pulsera real y desplegarlo (URLs de producción en Cognito).
 
 ## 3. Reglas de trabajo con el usuario

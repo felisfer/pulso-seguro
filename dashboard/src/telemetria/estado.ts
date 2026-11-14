@@ -80,11 +80,21 @@ export function parseVitals(texto: string): Vitals | null {
   }
 }
 
-export function parsePrediccion(texto: string): Prediccion | null {
+/** `recibido` se usa como `ts` si la Lambda no lo manda (versiones viejas). */
+export function parsePrediccion(texto: string, recibido: number): Prediccion | null {
   try {
-    const p = JSON.parse(texto) as Partial<Prediccion>
-    if (typeof p.ts !== "number" || typeof p.fc_pred !== "number") return null
-    return { ts: p.ts, fc_pred: p.fc_pred, horizonte_s: p.horizonte_s ?? 10, modelo: p.modelo ?? "?" }
+    const p = JSON.parse(texto) as Partial<Prediccion> & { fc_prevista?: unknown }
+    const fcPred = typeof p.fc_pred === "number" ? p.fc_pred : p.fc_prevista
+    if (typeof fcPred !== "number" || !Number.isFinite(fcPred)) return null
+    return {
+      ts: typeof p.ts === "number" ? p.ts : recibido,
+      fc_pred: fcPred,
+      horizonte_s: typeof p.horizonte_s === "number" ? p.horizonte_s : 10,
+      modelo: typeof p.modelo === "string" ? p.modelo : "?",
+      ...(typeof p.fc === "number" && { fc: p.fc }),
+      ...(SEMAFOROS.includes(p.semaforo as Semaforo) && { semaforo: p.semaforo }),
+      ...(typeof p.usado === "string" && { usado: p.usado }),
+    }
   } catch {
     return null
   }
@@ -168,7 +178,7 @@ function reducirMensaje(estado: EstadoTelemetria, topic: string, texto: string, 
     }
 
     case "pred": {
-      const p = parsePrediccion(texto)
+      const p = parsePrediccion(texto, recibido)
       if (!p) return estado
       const limite = recibido - VENTANA_HISTORIAL_MS
       return {

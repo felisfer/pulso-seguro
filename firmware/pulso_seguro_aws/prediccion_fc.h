@@ -102,13 +102,16 @@ inline void prediccionPublicar(PubSubClient& mqtt, const char* thing) {
 // Suscribirse al conectar:  mqtt.subscribe("bio/<thing>/pred");
 // En el callback MQTT, si el tópico termina en "/pred":
 inline void prediccionRecibir(const byte* payload, unsigned int len) {
-  char buf[200];
+  char buf[256];
   len = len < sizeof(buf) - 1 ? len : sizeof(buf) - 1;
   memcpy(buf, payload, len); buf[len] = 0;
   const char* p = strstr(buf, "\"fc_prevista\":");
   if (!p) return;
-  pred::fcPrevista = atof(p + 14);
-  pred::amarillo = strstr(buf, "\"semaforo\":\"amarillo\"") != nullptr;
+  pred::fcPrevista = atof(p + 14);                 // atof salta espacios
+  // Tolera `"semaforo":"amarillo"` y `"semaforo": "amarillo"`
+  const char* s = strstr(buf, "\"semaforo\":");
+  if (s) { s += 11; while (*s == ' ') s++; }
+  pred::amarillo = s && strncmp(s, "\"amarillo\"", 10) == 0;
   pred::recibidaMs = millis();
   pred::nRecibidas = pred::nRecibidas + 1;
 }

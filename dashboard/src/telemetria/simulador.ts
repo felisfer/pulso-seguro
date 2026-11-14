@@ -30,6 +30,7 @@ export function crearTransporteDemo(thing: string, eventos: EventosTransporte): 
   let seq = 0
   let fase = 0
   let tMs = 0
+  let ventana = 0
   const historialFc: number[] = []
 
   const emitir = (sub: string, texto: string) => {
@@ -73,11 +74,18 @@ export function crearTransporteDemo(thing: string, eventos: EventosTransporte): 
     setInterval(() => {
       if (historialFc.length < 3) return
       const pendiente = (historialFc[historialFc.length - 1] - historialFc[0]) / historialFc.length
-      const pred: Prediccion = {
+      const prevista = Math.round((fc + pendiente * 10 + ruido(1.5)) * 10) / 10
+      // Mismo payload que lambda/src/lambda_function.py (incluye los campos que lee el ESP32).
+      const pred: Prediccion & { win: number; fc_prevista: number } = {
         ts: Date.now(),
-        fc_pred: Math.round((fc + pendiente * 10 + ruido(1.5)) * 10) / 10,
+        win: ventana++,
+        fc: Math.round(fc * 10) / 10,
+        fc_prevista: prevista,
+        fc_pred: prevista,
         horizonte_s: 10,
+        semaforo: prevista > 120 ? "amarillo" : "verde",
         modelo: "demo-v1",
+        usado: "media3",
       }
       emitir("pred", JSON.stringify(pred))
     }, 2000),

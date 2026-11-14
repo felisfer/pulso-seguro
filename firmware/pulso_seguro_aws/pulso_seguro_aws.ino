@@ -44,6 +44,13 @@
  *    - Sin internet no hay FC prevista, pero todo lo demás funciona igual: las caídas,
  *      el pánico y el semáforo se deciden siempre en el ESP32.
  *
+ * Vitals para el dashboard (versión 7):
+ *    - La tarea AWS publica bio/<THING_NAME>/vitals con FC, SpO2, dedo, caída, pánico y el
+ *      semáforo general (el peor entre FC y SpO2, el mismo que la pantalla). Se envía al
+ *      cambiar (máximo 1 por segundo) y, si nada cambia, cada 5 s.
+ *    - La hora (ts) viene de NTP; mientras no se sincroniza se manda ts = 0.
+ *    - La política IoT del dispositivo debe permitir publicar en bio/<THING_NAME>/vitals.
+ *
  * Reglas automatizadas:
  *    R1 Detección de caída en 4 fases: caída libre -> impacto -> inmovilidad -> cambio de orientación
  *    R2 Ventana de confirmación de 15 s; si no se cancela, alarma completa (máximo 60 s de sonido)
@@ -494,6 +501,69 @@ int loteActual = -1;
 size_t largoLote = 0;
 int filasLote = 0;
 
+// --- bio/<thing>/vitals para el dashboard (versión 7) -------------------------
+// El núcleo 1 deja una instantánea (actualizarVitalsAWS) y el núcleo 0 la publica:
+// en cuanto cambia (máximo 1 por segundo) y, si no cambia, cada 5 s para mantener el
+// dashboard vivo. El semáforo es el mismo que pinta la pantalla: el dashboard no
+// recalcula umbrales.
+//   {"ts":1762900116724,"fc":72,"spo2":97,"dedo":true,"caida":false,"panico":false,"semaforo":"verde"}
+// ts = epoch en ms por NTP; 0 mientras no haya hora (el dashboard usa la de recepción).
+const char* TOPIC_VITALS = "bio/" THING_NAME "/vitals";
+const unsigned long VITALS_MIN_MS = 1000;
+const unsigned long VITALS_MAX_MS = 5000;
+
+struct Vitales {
+  int16_t fc, spo2;                // -1 = sin lectura válida (se publica null)
+  bool dedo, caida, panico;
+  char semaforo[9];                // "verde" | "amarillo" | "rojo"
+  // Miembro (no función libre): el preprocesador de Arduino pondría su prototipo antes del struct
+  bool igual(const Vitales& o) const {
+    return fc == o.fc && spo2 == o.spo2 && dedo == o.dedo && caida == o.caida &&
+           panico == o.panico && !strcmp(semaforo, o.semaforo);
+  }
+};
+portMUX_TYPE muxVitals = portMUX_INITIALIZER_UNLOCKED;
+Vitales vitalsCompartidos = { -1, -1, false, false, false, "amarillo" };
+volatile bool vitalsListos = false;                      // false hasta la primera instantánea
+volatile uint32_t awsVitalsEnviados = 0;
+
+// Epoch en ms; 0 si el reloj aún no se sincronizó por NTP (antes de 2020)
+uint64_t epochMs() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  if (tv.tv_sec < 1600000000) return 0;
+  return (uint64_t)tv.tv_sec * 1000ULL + tv.tv_usec / 1000;
+}
+
+// Núcleo 0: publica si cambió algo (≥ 1 s) o pasaron 5 s. `forzar` tras reconectar.
+void publicarVitals(bool forzar) {
+  static Vitales ultimo;
+  static unsigned long tUltimo = 0;
+  static bool hayUltimo = false;
+  if (!vitalsListos) return;
+
+  Vitales v;
+  portENTER_CRITICAL(&muxVitals);
+  v = vitalsCompartidos;
+  portEXIT_CRITICAL(&muxVitals);
+
+  unsigned long dt = millis() - tUltimo;
+  bool cambio = !hayUltimo || !v.igual(ultimo);
+  if (!forzar && !(cambio && dt >= VITALS_MIN_MS) && dt < VITALS_MAX_MS) return;
+
+  char fcTxt[8], spTxt[8], json[160];
+  if (v.fc < 0) strcpy(fcTxt, "null"); else snprintf(fcTxt, sizeof(fcTxt), "%d", v.fc);
+  if (v.spo2 < 0) strcpy(spTxt, "null"); else snprintf(spTxt, sizeof(spTxt), "%d", v.spo2);
+  int n = snprintf(json, sizeof(json),
+                   "{\"ts\":%llu,\"fc\":%s,\"spo2\":%s,\"dedo\":%s,\"caida\":%s,\"panico\":%s,\"semaforo\":\"%s\"}",
+                   (unsigned long long)epochMs(), fcTxt, spTxt, v.dedo ? "true" : "false",
+                   v.caida ? "true" : "false", v.panico ? "true" : "false", v.semaforo);
+  if (mqtt.publish(TOPIC_VITALS, (const uint8_t*)json, n, false)) {
+    ultimo = v; hayUltimo = true; tUltimo = millis();
+    awsVitalsEnviados++;
+  }
+}
+
 // --- Núcleo 0 -----------------------------------------------------------------
 // Extrae "campo": "valor" de un JSON simple (tolera espacios)
 String campoJSON(const String& json, const char* nombre) {
@@ -562,6 +632,7 @@ void tareaAWS(void* parametro) {
 
   unsigned long ultimoIntento = 0;
   bool primerIntento = true;
+  bool ntpIniciado = false;
   LoteListo pendiente;
   bool hayPendiente = false;
 
@@ -569,12 +640,18 @@ void tareaAWS(void* parametro) {
     awsWifi = (WiFi.status() == WL_CONNECTED);
     if (!awsWifi) { awsConectado = false; vTaskDelay(pdMS_TO_TICKS(500)); continue; }
 
+    if (!ntpIniciado) {                                  // hora UTC para el ts de vitals (asíncrono)
+      configTime(0, 0, "pool.ntp.org", "time.google.com");
+      ntpIniciado = true;
+    }
+
     if (!mqtt.connected()) {
       awsConectado = false;
       if (primerIntento || millis() - ultimoIntento > 5000) {
         primerIntento = false;
         ultimoIntento = millis();
         conectarAWS();                                   // bloquea 1-3 s, pero solo a este núcleo
+        if (mqtt.connected()) publicarVitals(true);      // el dashboard no espera 5 s
       }
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
@@ -583,6 +660,7 @@ void tareaAWS(void* parametro) {
     awsConectado = true;
     mqtt.loop();
     prediccionPublicar(mqtt, THING_NAME);                // features listas (~230 bytes cada 2 s)
+    publicarVitals(false);                               // ~110 bytes, 1 Hz como máximo
     if (!hayPendiente) hayPendiente = (xQueueReceive(qListos, &pendiente, 0) == pdTRUE);
     if (hayPendiente &&
         mqtt.publish(TOPIC_DATA, (const uint8_t*)lotesMem[pendiente.idx], pendiente.largo, false)) {
@@ -801,6 +879,33 @@ const char* semaforoSpO2() {
   if (spo2 >= SPO2_VERDE_MIN) return "verde";
   if (spo2 >= SPO2_AMARILLO_MIN) return "amarillo";
   return "rojo";
+}
+
+// Semáforo general para el dashboard: el peor entre FC (con el adelanto de la predicción,
+// igual que la pantalla) y SpO2. Sin ninguna lectura ("gris") se reporta "amarillo".
+// Las caídas y el pánico NO lo cambian: viajan aparte en "caida" y "panico".
+const char* semaforoGeneral() {
+  const char* sFc = fcPrevistaAlta() ? "amarillo" : semaforoFC();
+  const char* sSp = semaforoSpO2();
+  auto nivel = [](const char* s) { return !strcmp(s, "rojo") ? 3 : !strcmp(s, "amarillo") ? 2 : !strcmp(s, "verde") ? 1 : 0; };
+  const char* peor = nivel(sFc) >= nivel(sSp) ? sFc : sSp;
+  return nivel(peor) == 0 ? "amarillo" : peor;
+}
+
+// Núcleo 1: deja la instantánea que publica tareaAWS (copia breve bajo el mux)
+void actualizarVitalsAWS() {
+  Vitales v;
+  v.fc = (hayDedo && fc > 0) ? fc : -1;
+  v.spo2 = (hayDedo && spo2Valida) ? spo2 : -1;
+  v.dedo = hayDedo;
+  v.caida = estado == CONFIRMACION || (estado == ALARMA && !alarmaPorPanico);
+  v.panico = estado == ALARMA && alarmaPorPanico;
+  strncpy(v.semaforo, semaforoGeneral(), sizeof(v.semaforo) - 1);
+  v.semaforo[sizeof(v.semaforo) - 1] = 0;
+  portENTER_CRITICAL(&muxVitals);
+  vitalsCompartidos = v;
+  portEXIT_CRITICAL(&muxVitals);
+  vitalsListos = true;
 }
 
 // ============================================================================
@@ -1139,8 +1244,9 @@ void imprimirResumen() {
                 hayDedo ? "SI" : "NO", (unsigned long)ultimoIR,
                 magnitudG, UMBRAL_IMPACTO_G,
                 dibujoMaxUs / 1000.0, cicloMaxUs / 1000.0);
-  Serial.printf("            AWS: wifi %s | mqtt %s | captura %s (%lu muestras) | lotes enviados %lu | descartadas %lu | intentos %lu | heap %u (bloque max %u, mínimo %u)\n",
-                awsWifi ? "OK" : "--", awsConectado ? "OK" : "--", capturando ? "SI" : "NO",
+  Serial.printf("            AWS: wifi %s | mqtt %s | hora %s | vitals %lu | captura %s (%lu muestras) | lotes enviados %lu | descartadas %lu | intentos %lu | heap %u (bloque max %u, mínimo %u)\n",
+                awsWifi ? "OK" : "--", awsConectado ? "OK" : "--", epochMs() ? "NTP" : "--",
+                (unsigned long)awsVitalsEnviados, capturando ? "SI" : "NO",
                 (unsigned long)seqCaptura, (unsigned long)awsLotesEnviados,
                 (unsigned long)awsMuestrasDescartadas, (unsigned long)awsIntentos,
                 (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
@@ -1213,5 +1319,6 @@ void loop() {
   actualizarPantalla();        // TFT: una región por vuelta, como máximo
   procesarComandosAWS();       // start / stop recibidos por MQTT
   procesarPrediccion();        // evento al empezar/terminar un aviso de FC prevista alta
+  actualizarVitalsAWS();       // instantánea para bio/<thing>/vitals (la publica el núcleo 0)
   imprimirResumen();
 }

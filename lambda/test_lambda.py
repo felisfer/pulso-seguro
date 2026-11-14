@@ -105,6 +105,11 @@ def main():
                                          ensure_ascii=False, indent=1))
     print("Último MQTT:", publicados[-1]["topic"], publicados[-1]["payload"])
     assert len(items) == enviados and len(publicados) == enviados
+    # Contrato de /pred: lo que lee el ESP32 y lo que lee el dashboard
+    pred = json.loads(publicados[-1]["payload"])
+    for k in ("win", "fc_prevista", "semaforo", "ts", "fc_pred", "horizonte_s", "modelo"):
+        assert k in pred, f"falta {k} en /pred"
+    assert pred["fc_pred"] == pred["fc_prevista"] and pred["ts"] == ev["ts"]
     assert len(cerrados) >= 0.8 * (enviados - 5)
     print("\nLAMBDA OK ✅")
 

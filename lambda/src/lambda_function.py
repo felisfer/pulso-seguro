@@ -4,7 +4,7 @@ PulsoSeguro · Lambda de predicción de FC a +10 s.
 Disparo:  IoT Rule  SELECT *, topic(2) AS thing, timestamp() AS ts FROM 'bio/+/features'
 Entrada:  {"v":1, "boot":"9f3a1c2e", "win":123, "t_ms":456789, "f":[16 features], "thing":..., "ts":...}
 Salida:   1) DynamoDB  → un ítem por ventana (predicción) + cierre del ciclo con la FC real
-          2) MQTT      → bio/<thing>/pred  {"win", "fc", "fc_prevista", "semaforo", "modelo"}
+          2) MQTT      → bio/<thing>/pred  {"ts", "win", "fc", "fc_prevista", "fc_pred", "horizonte_s", "semaforo", "modelo", "usado"}
 
 Sin dependencias: solo la biblioteca estándar y boto3 (incluido en el runtime).
 El modelo es un JSON en S3 (exportar_modelo.py); se recarga solo si cambia su ETag,
@@ -130,9 +130,13 @@ def lambda_handler(event, context):
         raise
 
     if iot:
+        # El ESP32 lee fc_prevista/semaforo; el dashboard lee ts/fc_pred/horizonte_s.
+        # JSON compacto (sin espacios): el ESP32 lo lee con strstr en un buffer de 256 B.
         iot.publish(topic=f"bio/{thing}/pred", qos=0, payload=json.dumps({
-            "win": win, "fc": round(fc, 1), "fc_prevista": round(prevista, 1),
-            "semaforo": semaforo, "modelo": m["version"], "usado": m["usar"]}))
+            "fc_prevista": round(prevista, 1), "semaforo": semaforo,
+            "ts": ts, "win": win, "fc": round(fc, 1),
+            "fc_pred": round(prevista, 1), "horizonte_s": m["horizonte_s"],
+            "modelo": m["version"], "usado": m["usar"]}, separators=(",", ":")))
 
     cerrado = cerrar_ciclo(thing, ts, boot, win, fc, m["horizonte_s"])
     log.info(json.dumps({"evento": "prediccion", "thing": thing, "win": win, "fc": round(fc, 1),

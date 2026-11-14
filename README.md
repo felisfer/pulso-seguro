@@ -14,8 +14,8 @@ Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO�
 | Modelo de predicción de FC (+10 s) | 🟡 Pipeline listo; **todavía no supera a la línea base** por falta de datos ([resultados](#resultados-actuales)) |
 | FC durante movimiento (filtrado de artefactos con el acelerómetro) | ⏳ Pendiente |
 | Dashboard web (React): login con Cognito, monitor en vivo, diseño editable | ✅ Funcional en modo demo; ⏳ falta conectarlo a AWS IoT ([pasos](#configuración-de-aws-para-el-dashboard)) |
-| Tópico `vitals` (FC, SpO₂, caída y semáforo a 1 Hz) en el firmware | ⏳ Pendiente |
-| Lambda de predicción en vivo (`pred` + DynamoDB + API del historial) | ⏳ Planeado |
+| Tópico `vitals` (FC, SpO₂, caída y semáforo) en el firmware v7 | 🟡 Compila; falta probarlo en la placa |
+| Lambda de predicción en vivo (`pred` + DynamoDB) | 🟡 Lista y probada con moto ([README_prediccion.md](README_prediccion.md)); falta desplegarla. API del historial ⏳ |
 
 ## Contenido
 
@@ -59,7 +59,7 @@ flowchart TB
     Pred["Lambda de predicción<br/>+ DynamoDB (planeado)"]
 
     N0 -- "bio/thing/data · status" --> IoT
-    N0 -. "bio/thing/vitals (pendiente)" .-> IoT
+    N0 -- "bio/thing/vitals" --> IoT
     IoT -- "bio/thing/cmd" --> N0
     PC -- "cmd" --> IoT
     S3 --> ML
@@ -155,8 +155,8 @@ La pantalla muestra el estado y su cuenta regresiva, la FC y la SpO₂ con el co
 | `bio/<THING_NAME>/data` | ESP32 | Lotes CSV de ~10 KB (~1.5 s de señal) |
 | `bio/<THING_NAME>/cmd` | PC (`control.py`) | `{"cmd":"start","sesion":…,"label":…,"sujeto":…}` o `{"cmd":"stop"}` |
 | `bio/<THING_NAME>/status` | ESP32 (y AWS como Last Will) | `online` / `offline`, retenido |
-| `bio/<THING_NAME>/vitals` | ESP32 (**pendiente**) | JSON a 1 Hz con FC, SpO₂, contacto, caída y semáforo ([formato](#tópicos-que-usa-el-dashboard)) |
-| `bio/<THING_NAME>/pred` | Lambda (**planeado**) | JSON cada 2 s con la FC predicha ([formato](#tópicos-que-usa-el-dashboard)) |
+| `bio/<THING_NAME>/vitals` | ESP32 (v7) | JSON al cambiar (máx. 1 Hz, mín. cada 5 s) con FC, SpO₂, contacto, caída, pánico y semáforo ([formato](#tópicos-que-usa-el-dashboard)) |
+| `bio/<THING_NAME>/pred` | Lambda | JSON cada 2 s con la FC predicha ([formato](#tópicos-que-usa-el-dashboard)) |
 
 ### Formato de cada lote
 
@@ -352,20 +352,22 @@ Primer dataset real (10/11/2026): 1 sujeto, 5 sesiones de 60 s, una sola activid
 | Tópico | El dashboard… | Formato |
 |---|---|---|
 | `bio/<thing>/status` | se suscribe | Texto `online` / `offline`, retenido |
-| `bio/<thing>/vitals` | se suscribe | JSON a 1 Hz |
+| `bio/<thing>/vitals` | se suscribe | JSON al cambiar (máx. 1 Hz) o cada 5 s |
 | `bio/<thing>/pred` | se suscribe | JSON cada 2 s |
 | `bio/<thing>/data` | se suscribe solo si se activa «Recibir señal cruda» | CSV de ~10 KB ([formato](#formato-de-cada-lote)) |
 | `bio/<thing>/cmd` | publica (opcional) | `{"cmd":"start","sesion":…,"label":…,"sujeto":…}` o `{"cmd":"stop"}` |
 
 ```jsonc
 // bio/<thing>/vitals: el ESP32 decide el semáforo; el dashboard no recalcula umbrales
-{ "ts": 1763086800000, "fc": 78, "spo2": 97, "dedo": true, "caida": false, "semaforo": "verde" }
+{"ts":1763086800000,"fc":78,"spo2":97,"dedo":true,"caida":false,"panico":false,"semaforo":"verde"}
 
-// bio/<thing>/pred: la Lambda lo publica y también lo guarda en DynamoDB
-{ "ts": 1763086802000, "fc_pred": 92.4, "horizonte_s": 10, "modelo": "ridge-v1" }
+// bio/<thing>/pred: la Lambda lo publica y también lo guarda en DynamoDB.
+// El ESP32 lee fc_prevista y semaforo; el dashboard, ts, fc_pred y horizonte_s.
+{"fc_prevista":92.4,"semaforo":"verde","ts":1763086802000,"win":54,"fc":88.1,
+ "fc_pred":92.4,"horizonte_s":10,"modelo":"20261112-030721","usado":"ridge"}
 ```
 
-- `ts` es epoch en ms (el ESP32 lo obtiene por NTP). `fc` y `spo2` son `null` si no hay lectura válida. `semaforo` es `"verde"`, `"amarillo"` o `"rojo"` (el amarillo se muestra en naranja).
+- `ts` es epoch en ms (el ESP32 lo obtiene por NTP; manda `0` mientras no tiene hora y el dashboard usa la de recepción). `fc` y `spo2` son `null` si no hay lectura válida. `semaforo` es `"verde"`, `"amarillo"` o `"rojo"` (el amarillo se muestra en naranja): el peor entre FC y SpO₂, y `"amarillo"` sin lectura. La caída y el pánico no cambian el semáforo; van en `caida` y `panico` (el dashboard todavía no muestra `panico`).
 - Los tipos están en `dashboard/src/tipos.ts` y el enrutado por tópico en `dashboard/src/telemetria/estado.ts`.
 - La Rule `bio_a_s3` filtra `bio/+/data`, así que `vitals` y `pred` no llegan a S3.
 

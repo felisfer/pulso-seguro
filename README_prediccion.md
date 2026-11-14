@@ -69,8 +69,15 @@ El cierre del ciclo es un `Query` en `ts ∈ [ahora-13 s, ahora-7 s]` filtrado p
  "f":[fc, fc_fft, cv_ibi, perfusion, razon_r, acc_media, acc_std, acc_frec, gyro_std,
       fc_lag1, fc_lag2, fc_lag3, acc_std_lag1, acc_std_lag2, acc_std_lag3, tendencia]}
 
-// bio/<thing>/pred       (Lambda → ESP32)
-{"win":54, "fc":66.3, "fc_prevista":66.3, "semaforo":"verde", "modelo":"20261112-030721", "usado":"ridge"}
+// bio/<thing>/pred       (Lambda → ESP32 y dashboard; JSON compacto, sin espacios)
+//   ESP32 lee fc_prevista y semaforo · dashboard lee ts, fc_pred y horizonte_s
+{"fc_prevista":66.3,"semaforo":"verde","ts":1762900116724,"win":54,"fc":66.3,
+ "fc_pred":66.3,"horizonte_s":10,"modelo":"20261112-030721","usado":"ridge"}
+
+// bio/<thing>/vitals     (ESP32 → dashboard, al cambiar con máximo 1/s, o cada 5 s)
+//   ts = epoch ms por NTP (0 sin hora) · fc/spo2 = null sin lectura válida
+//   semaforo = el peor entre FC (con el adelanto de la predicción) y SpO2; "amarillo" sin lectura
+{"ts":1762900116724,"fc":72,"spo2":97,"dedo":true,"caida":false,"panico":false,"semaforo":"verde"}
 ```
 
 `v` es la versión del extractor. Si algún día cambias una feature, sube `VERSION_FEATURES` en ambos lados: la Lambda rechaza mensajes cuya versión no coincide con la del modelo, en vez de predecir basura en silencio.
