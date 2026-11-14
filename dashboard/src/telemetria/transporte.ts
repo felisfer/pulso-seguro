@@ -68,7 +68,10 @@ export function crearTransporteIot(
       if (cerrado) return
 
       const nuevo = mqtt.connect(url, {
-        clientId: `web-${crypto.randomUUID()}`,
+        // "<identityId>-<uuid>": la política IoT del dashboard solo permite
+        // client/${cognito-identity.amazonaws.com:sub}-*, así nadie puede usar el client ID
+        // de otro usuario (y desconectarlo). El uuid distingue las pestañas del mismo usuario.
+        clientId: `${cred.identityId}-${crypto.randomUUID()}`,
         protocolVersion: 4,
         clean: true,
         reconnectPeriod: 0,

@@ -6,12 +6,18 @@
 .EXAMPLE
   .\infra\desplegar.ps1 -Modelo modelo_fc.json -Bucket mi-bucket-del-dataset
   .\infra\desplegar.ps1 -Modelo modelo_fc_v2.json -Bucket mi-bucket -SoloModelo
+  # Con la API del historial del dashboard (User Pool y App client del login):
+  .\infra\desplegar.ps1 -Modelo modelo_fc.json -Bucket mi-bucket -UserPoolId us-east-2_AbCdEf123 `
+      -ClientId 1a2b3c... -Origenes 'http://localhost:5173,https://mi-dashboard.example.com'
 
 .NOTES
   - Requiere AWS CLI v2 configurado (aws configure) con permisos de CloudFormation, IAM,
     Lambda, DynamoDB, IoT, Logs y S3.
   - -Bucket e -IotEndpoint también se leen de $env:BUCKET y $env:AWS_IOT_ENDPOINT.
     Si no das el endpoint, se obtiene solo con 'aws iot describe-endpoint'.
+  - -UserPoolId, -ClientId y -Origenes son opcionales: si das -UserPoolId se crea la API del
+    historial (salida UrlApiHistorial = VITE_HISTORY_API_URL). Si no los das en una
+    actualización, la pila conserva los valores anteriores.
   - Si Windows bloquea el script:  powershell -ExecutionPolicy Bypass -File .\infra\desplegar.ps1 ...
 #>
 [CmdletBinding()]
@@ -19,8 +25,11 @@ param(
     [Parameter(Mandatory = $true)][string]$Modelo,
     [string]$Bucket = $env:BUCKET,
     [string]$IotEndpoint = $env:AWS_IOT_ENDPOINT,
-    [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { 'us-east-1' }),
+    [string]$Region = $(if ($env:AWS_REGION) { $env:AWS_REGION } else { 'us-east-2' }),
     [string]$Pila = $(if ($env:PILA) { $env:PILA } else { 'pulsoseguro-prediccion' }),
+    [string]$UserPoolId,
+    [string]$ClientId,
+    [string]$Origenes,
     [switch]$ArchivarFeatures,
     [switch]$SoloModelo
 )
@@ -42,6 +51,7 @@ if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
 }
 if (-not $Bucket) { throw 'Indica -Bucket o define $env:BUCKET' }
 if (-not (Test-Path $Modelo)) { throw "No existe el archivo de modelo: $Modelo" }
+if ($UserPoolId -and -not $ClientId) { throw 'Con -UserPoolId también hace falta -ClientId (App client del dashboard)' }
 if (-not $IotEndpoint) {
     $IotEndpoint = Invoke-Aws iot describe-endpoint --endpoint-type iot:Data-ATS --region $Region `
         --query endpointAddress --output text
@@ -86,12 +96,15 @@ try {
 
     Write-Host "> Desplegando la pila $Pila..." -ForegroundColor Cyan
     $archivar = if ($ArchivarFeatures) { 'true' } else { 'false' }
+    $parametros = @("ModeloBucket=$Bucket", "IotEndpoint=$IotEndpoint", "ArchivarFeatures=$archivar")
+    if ($UserPoolId) { $parametros += "CognitoUserPoolId=$UserPoolId", "CognitoClientId=$ClientId" }
+    if ($Origenes) { $parametros += "OrigenesCors=$Origenes" }
     Invoke-Aws cloudformation deploy --region $Region `
         --stack-name $Pila `
         --template-file $empaquetado `
         --capabilities CAPABILITY_IAM `
         --no-fail-on-empty-changeset `
-        --parameter-overrides "ModeloBucket=$Bucket" "IotEndpoint=$IotEndpoint" "ArchivarFeatures=$archivar" | Out-Host
+        --parameter-overrides @parametros | Out-Host
 
     Invoke-Aws cloudformation describe-stacks --region $Region --stack-name $Pila `
         --query 'Stacks[0].Outputs' --output table | Out-Host

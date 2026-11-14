@@ -103,6 +103,10 @@ export AWS_IOT_ENDPOINT=$(aws iot describe-endpoint --endpoint-type iot:Data-ATS
 # 2b) En Windows (PowerShell); el endpoint IoT se detecta solo si no lo das
 #   .\infra\desplegar.ps1 -Modelo modelo_fc.json -Bucket <tu bucket>
 #   .\infra\desplegar.ps1 -Modelo modelo_fc_v2.json -Bucket <tu bucket> -SoloModelo
+#   Con la API del historial del dashboard (salida UrlApiHistorial → VITE_HISTORY_API_URL):
+#   .\infra\desplegar.ps1 -Modelo modelo_fc.json -Bucket <tu bucket> -UserPoolId <pool> -ClientId <app client> `
+#       -Origenes "http://localhost:5173,http://localhost:8080"
+#   La región por defecto es us-east-2 (o $env:AWS_REGION).
 #   Si lo bloquea la política de ejecución:
 #   powershell -ExecutionPolicy Bypass -File .\infra\desplegar.ps1 -Modelo modelo_fc.json -Bucket <tu bucket>
 

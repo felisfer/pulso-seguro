@@ -28,8 +28,8 @@ pulso-seguro/
 | **Dashboard web** | ✅ Completo en **modo demo**; login con Cognito funciona (incluido el logout); ⏳ **sin conectar a AWS IoT** |
 | Tópico `bio/<thing>/vitals` en el firmware | 🟡 Implementado (al cambiar, máx. 1 Hz; mín. cada 5 s; ts por NTP) |
 | Lambda de predicción → `bio/<thing>/pred` + DynamoDB (`lambda/`, `infra/`, ver `README_prediccion.md`) | 🟡 Probada con moto; falta desplegarla |
-| API del historial (`GET /predicciones`) | ⏳ No existe todavía |
-| Modelo reentrenado con el extractor nuevo (`modelo/exportar_modelo.py`) | ⏳ Falta con `dataset.csv` real |
+| API del historial (`GET /predicciones`, `lambda/api/`, HTTP API + JWT de Cognito) | 🟡 Probada con moto; se despliega con `-UserPoolId/-ClientId` |
+| Modelo reentrenado con el extractor nuevo (`modelo/exportar_modelo.py`) | 🟡 `modelo_fc.json` exportado con datos reales; paridad C/Python OK; `usar: media3` (Ridge 8.47 vs. media3 6.99 lpm) |
 
 ### Dashboard: lo que ya está hecho
 
@@ -45,7 +45,7 @@ pulso-seguro/
 
 1. **AWS** (el usuario lo hace en la consola; los pasos están en el README, sección «Configuración de AWS para el dashboard»): Identity Pool, rol IAM autenticado, política IoT `dashboard-policy` adjunta a cada identidad, y `VITE_IDENTITY_POOL_ID` / `VITE_IOT_ENDPOINT` / `VITE_THING_NAMES`.
 2. **Firmware**: probar v7 en la placa (features, `/pred`, `vitals`, heap libre). La política IoT del dispositivo debe permitir publicar en `bio/<thing>/vitals` y `bio/<thing>/features`, y suscribirse a `bio/<thing>/pred`.
-3. **Lambda**: reentrenar, desplegar con `infra/desplegar.ps1`; después, API Gateway `GET /predicciones?thing=&desde=&hasta=`.
+3. **Lambda + API**: desplegar con `infra/desplegar.ps1` (con `-UserPoolId`/`-ClientId` crea la API del historial) y poner `UrlApiHistorial` en `VITE_HISTORY_API_URL`. El modelo real aún no supera a `media3` (329 ventanas): grabar más sesiones de `transicion` y reentrenar.
 4. Probar el dashboard con la pulsera real y desplegarlo (URLs de producción en Cognito).
 
 ## 3. Reglas de trabajo con el usuario

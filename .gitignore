@@ -16,6 +16,7 @@ dataset.csv
 *.parquet
 salida_fc/
 *.exe
+*.pdb
 
 # --- Python ---
 __pycache__/

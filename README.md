@@ -15,7 +15,7 @@ Pulsera IoT basada en ESP32 que monitorea **frecuencia cardiaca (FC)** y **SpO�
 | FC durante movimiento (filtrado de artefactos con el acelerómetro) | ⏳ Pendiente |
 | Dashboard web (React): login con Cognito, monitor en vivo, diseño editable | ✅ Funcional en modo demo; ⏳ falta conectarlo a AWS IoT ([pasos](#configuración-de-aws-para-el-dashboard)) |
 | Tópico `vitals` (FC, SpO₂, caída y semáforo) en el firmware v7 | 🟡 Compila; falta probarlo en la placa |
-| Lambda de predicción en vivo (`pred` + DynamoDB) | 🟡 Lista y probada con moto ([README_prediccion.md](README_prediccion.md)); falta desplegarla. API del historial ⏳ |
+| Lambda de predicción en vivo (`pred` + DynamoDB) | 🟡 Lista y probada con moto ([README_prediccion.md](README_prediccion.md)); falta desplegarla. API del historial 🟡 lista (`lambda/api/`, opcional en la misma pila) |
 
 ## Contenido
 
@@ -341,7 +341,7 @@ Primer dataset real (10/11/2026): 1 sujeto, 5 sesiones de 60 s, una sola activid
 | Eventos recientes | Caída, semáforo en rojo, pérdida de contacto, pulsera conectada o desconectada | Calculado en el navegador |
 | Onda de pulso (PPG) | Canal IR de los últimos 6 s y muestras perdidas. **Apagada por defecto** por costo | `data` |
 | Sesión de captura | Equivalente web de `control.py`: `start` con actividad, sujeto y duración, y `stop`. Solo con `VITE_ENABLE_CMD=true` | Publica en `cmd` |
-| Historial de predicciones | FC predicha de la última 1, 6 o 24 h. Solo con `VITE_HISTORY_API_URL` | API → DynamoDB |
+| Historial de predicciones | FC medida contra FC predicha de la última 1, 6 o 24 h (donde se separan está el error del modelo). Solo con `VITE_HISTORY_API_URL` | API → DynamoDB |
 
 - **Diseño editable.** «Editar diseño» permite mover y redimensionar cada tarjeta y panel. El contenido se adapta al tamaño (texto, ilustraciones y gráficas). El diseño se guarda en el navegador por usuario y «Restablecer diseño» vuelve al original. En móvil se usa una sola columna fija.
 - **Accesibilidad.** Tema claro y oscuro automático; los colores de estado siempre van con ícono y texto; las gráficas tienen tooltip y vista de tabla. Si el sistema pide *reducir movimiento* (en Windows, *Efectos de animación* apagados), el corazón y las burbujas solo cambian de brillo.
@@ -438,7 +438,7 @@ En la demo, «Sesión de captura» con la actividad `correr` sube la FC hasta ~1
      "Version": "2012-10-17",
      "Statement": [
        { "Effect": "Allow", "Action": "iot:Connect",
-         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:client/web-*" },
+         "Resource": "arn:aws:iot:us-east-2:<ACCOUNT_ID>:client/${cognito-identity.amazonaws.com:sub}-*" },
        { "Effect": "Allow", "Action": "iot:Subscribe",
          "Resource": [
            "arn:aws:iot:us-east-2:<ACCOUNT_ID>:topicfilter/bio/*/status",
@@ -459,6 +459,8 @@ En la demo, «Sesión de captura» con la actividad `correr` sube la FC hasta ~1
 
    `bio-policy` no sirve para el navegador: `${iot:Connection.Thing.ThingName}` solo funciona con conexiones por certificado.
 
+   El dashboard se conecta con el *client ID* `<identityId>-<uuid>`, y `${cognito-identity.amazonaws.com:sub}` es ese identityId: cada usuario solo puede usar client IDs con su propia identidad, así nadie puede desconectar a otro reutilizando su client ID. Si no darás el `Publish` sobre `cmd`, no uses el panel «Sesión de captura»: una publicación no autorizada hace que IoT cierre la conexión.
+
 4. **Política IoT del dashboard** (por ejemplo `dashboard-policy`) con el mismo documento, **adjunta a cada identidad de Cognito**. Con identidades autenticadas, IoT exige las dos políticas; sin esta, cierra la conexión sin explicar. El dashboard muestra el *Identity ID* en el aviso de error:
 
    ```bash
@@ -470,13 +472,25 @@ En la demo, «Sesión de captura» con la actividad `correr` sube la FC hasta ~1
 
 ### API del historial
 
-Contrato esperado (API Gateway → DynamoDB, con CORS para el origen del dashboard):
+Es una HTTP API de API Gateway con autorizador JWT de Cognito y una Lambda de solo lectura (`lambda/api/api_historial.py`). Se crea en la misma pila de `infra/template.yaml` cuando le das el User Pool:
+
+```powershell
+.\infra\desplegar.ps1 -Modelo modelo_fc.json -Bucket <bucket> -UserPoolId <user pool id> -ClientId <app client id> `
+    -Origenes "http://localhost:5173,http://localhost:8080,https://<dominio del dashboard>"
+```
+
+La salida `UrlApiHistorial` es el valor de `VITE_HISTORY_API_URL`. Contrato:
 
 ```text
-GET {VITE_HISTORY_API_URL}/predicciones?thing=<thing>&desde=<ms>&hasta=<ms>
+GET {VITE_HISTORY_API_URL}/predicciones?thing=<thing>&desde=<ms>&hasta=<ms>     (rango máximo 24 h)
 Authorization: Bearer <id_token>
-→ Prediccion[]   o   { "items": Prediccion[] }
+→ { "items": [{ "ts", "fc_pred", "horizonte_s", "modelo", "fc", "fc_real"?, "usado" }], "total", "truncado" }
 ```
+
+- `fc_real` es la FC medida 10 s después; falta en las predicciones de los últimos 10 s.
+- La tabla tiene 5 RCU aprovisionadas. Por eso la API lee como máximo 5,000 ítems (~2.8 h con la pulsera puesta todo el tiempo), empezando por los más recientes, y devuelve `truncado: true` si quedaron más. Responde con 720 puntos como máximo (promedios). La etapa limita a 2 peticiones/s.
+- Cualquier usuario del User Pool puede consultar cualquier `thing`. Para un proyecto con varios pacientes habría que asociar usuarios a pulseras.
+- Prueba local: `python lambda/test_api.py`.
 
 ## Costos
 

@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { config } from "../config"
 import type { Prediccion } from "../tipos"
 import { fechaHora, horaCorta } from "../utilidades/tiempo"
-import { GraficaLinea } from "./GraficaLinea"
+import { GraficaLinea, type Serie } from "./GraficaLinea"
 
 const RANGOS = [
   { id: "1h", nombre: "1 h", ms: 3_600_000 },
@@ -10,36 +10,59 @@ const RANGOS = [
   { id: "24h", nombre: "24 h", ms: 24 * 3_600_000 },
 ] as const
 
+/** Un punto del historial: la predicción y, si ya pasaron los 10 s, la FC que de verdad se midió. */
+type PuntoHistorial = Prediccion & { fc_real?: number }
+
+interface Historial {
+  datos: PuntoHistorial[]
+  /** La API leyó su máximo de ítems: solo llegan los más recientes del rango. */
+  truncado: boolean
+}
+
 type Resultado =
   | { tipo: "cargando" }
   | { tipo: "error"; mensaje: string }
-  | { tipo: "ok"; datos: Prediccion[]; desde: number; hasta: number }
+  | ({ tipo: "ok"; desde: number; hasta: number } & Historial)
 
 /**
- * Contrato esperado de la API (API Gateway → DynamoDB):
+ * Contrato de la API (lambda/api/api_historial.py, HTTP API con autorizador JWT de Cognito):
  *   GET {VITE_HISTORY_API_URL}/predicciones?thing=<thing>&desde=<ms>&hasta=<ms>
  *   Authorization: Bearer <id_token>
- *   → Prediccion[]  o  { items: Prediccion[] }
+ *   → { items: [{ ts, fc_pred, horizonte_s, modelo, fc, fc_real?, usado }], total, truncado }
  */
-async function cargarHistorial(thing: string, desde: number, hasta: number, idToken?: string, señal?: AbortSignal) {
-  if (config.demo && !config.historialApiUrl) return historialDemo(desde, hasta)
+async function cargarHistorial(
+  thing: string,
+  desde: number,
+  hasta: number,
+  idToken?: string,
+  señal?: AbortSignal,
+): Promise<Historial> {
+  if (config.demo && !config.historialApiUrl) return { datos: historialDemo(desde, hasta), truncado: false }
   const url = `${config.historialApiUrl}/predicciones?thing=${encodeURIComponent(thing)}&desde=${desde}&hasta=${hasta}`
   const respuesta = await fetch(url, {
     headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
     signal: señal,
   })
+  if (respuesta.status === 401) throw new Error("la sesión expiró; vuelve a iniciar sesión")
   if (!respuesta.ok) throw new Error(`La API respondió ${respuesta.status}`)
-  const json = (await respuesta.json()) as Prediccion[] | { items: Prediccion[] }
-  const datos = Array.isArray(json) ? json : json.items
-  return datos.filter(p => typeof p.ts === "number" && typeof p.fc_pred === "number").sort((a, b) => a.ts - b.ts)
+  const json = (await respuesta.json()) as PuntoHistorial[] | { items: PuntoHistorial[]; truncado?: boolean }
+  const items = Array.isArray(json) ? json : json.items
+  return {
+    datos: items.filter(p => typeof p.ts === "number" && typeof p.fc_pred === "number").sort((a, b) => a.ts - b.ts),
+    truncado: !Array.isArray(json) && Boolean(json.truncado),
+  }
 }
 
-function historialDemo(desde: number, hasta: number): Prediccion[] {
-  const datos: Prediccion[] = []
+function historialDemo(desde: number, hasta: number): PuntoHistorial[] {
+  const datos: PuntoHistorial[] = []
   const paso = Math.max(2000, Math.floor((hasta - desde) / 600))
+  const fcEn = (t: number) => 76 + Math.sin(t / 1_800_000) * 18 + Math.sin(t / 240_000) * 6
   for (let t = desde; t <= hasta; t += paso) {
-    const actividad = Math.sin(t / 1_800_000) * 18 + Math.sin(t / 240_000) * 6
-    datos.push({ ts: t, fc_pred: Math.round((76 + actividad + Math.random() * 3) * 10) / 10, horizonte_s: 10, modelo: "demo-v1" })
+    const prevista = Math.round((fcEn(t + 10_000) + (Math.random() * 2 - 1) * 3) * 10) / 10
+    const punto: PuntoHistorial = { ts: t, fc_pred: prevista, horizonte_s: 10, modelo: "demo-v1" }
+    // Como en la tabla real: las predicciones de los últimos 10 s aún no tienen FC real.
+    if (t + 10_000 <= hasta) punto.fc_real = Math.round((fcEn(t + 10_000) + (Math.random() * 2 - 1)) * 10) / 10
+    datos.push(punto)
   }
   return datos
 }
@@ -56,7 +79,7 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
     const hasta = Date.now()
     const desde = hasta - RANGOS.find(r => r.id === rango)!.ms
     cargarHistorial(thing, desde, hasta, idToken, control.signal)
-      .then(datos => setResultado({ tipo: "ok", datos, desde, hasta }))
+      .then(h => setResultado({ tipo: "ok", ...h, desde, hasta }))
       .catch(err => {
         if (!control.signal.aborted) setResultado({ tipo: "error", mensaje: err instanceof Error ? err.message : String(err) })
       })
@@ -64,6 +87,28 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
     // El id_token se renueva solo; no hace falta recargar por eso.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thing, rango, recarga, disponible])
+
+  // Ambas series en el instante que se predijo (ts + horizonte), como en «Tendencias»:
+  // donde se separan las líneas está el error del modelo.
+  const series = useMemo<Serie[]>(() => {
+    if (resultado.tipo !== "ok") return []
+    const objetivo = (p: PuntoHistorial) => p.ts + p.horizonte_s * 1000
+    return [
+      {
+        id: "real",
+        nombre: "FC medida",
+        color: "var(--serie-1)",
+        puntos: resultado.datos.filter(p => p.fc_real !== undefined).map(p => ({ t: objetivo(p), v: p.fc_real! })),
+      },
+      {
+        id: "pred",
+        nombre: "FC predicha",
+        color: "var(--serie-2)",
+        discontinua: true,
+        puntos: resultado.datos.map(p => ({ t: objetivo(p), v: p.fc_pred })),
+      },
+    ]
+  }, [resultado])
 
   const cambiarRango = (id: typeof rango) => {
     setResultado({ tipo: "cargando" })
@@ -105,11 +150,11 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
       ) : (
         <>
           <GraficaLinea
-            titulo="FC predicha"
+            titulo="FC medida vs. predicha"
             unidad="lpm"
-            series={[{ id: "pred", nombre: "FC predicha", color: "var(--serie-2)", puntos: resultado.datos.map(p => ({ t: p.ts, v: p.fc_pred })) }]}
+            series={series}
             desde={resultado.desde}
-            hasta={resultado.hasta}
+            hasta={resultado.hasta + 10_000}
             yMin={50}
             yMax={120}
             decimales={1}
@@ -120,6 +165,7 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
           <p className="tarjeta-pie">
             {resultado.datos.length.toLocaleString("es-MX")} predicciones
             {resultado.datos.length > 0 && ` · modelo ${resultado.datos[resultado.datos.length - 1].modelo}`}
+            {resultado.truncado && " · rango recortado: se muestran solo las más recientes"}
           </p>
         </>
       )}

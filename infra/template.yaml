@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   PulsoSeguro - prediccion de FC a +10 s. IoT Rule (bio/+/features) -> Lambda (Ridge en JSON)
-  -> DynamoDB (predicciones + FC real a +10 s) y MQTT bio/<thing>/pred.
+  -> DynamoDB (predicciones + FC real a +10 s) y MQTT bio/<thing>/pred. Opcional: HTTP API
+  GET /predicciones (JWT de Cognito) para el historial del dashboard.
 
 Parameters:
   ModeloBucket:
@@ -28,9 +29,23 @@ Parameters:
     AllowedValues: ["true", "false"]
     Default: "false"
     Description: Guarda tambien cada mensaje de features en S3 (features/...) para validar la paridad con datos reales
+  # --- API del historial (opcional: solo se crea si das el User Pool) ---
+  CognitoUserPoolId:
+    Type: String
+    Default: ""
+    Description: User Pool del dashboard (p. ej. us-east-2_AbCdEf123). Vacio = sin API del historial
+  CognitoClientId:
+    Type: String
+    Default: ""
+    Description: App client ID del dashboard (el aud del id_token)
+  OrigenesCors:
+    Type: CommaDelimitedList
+    Default: "http://localhost:5173,http://localhost:8080"
+    Description: Origenes del dashboard que pueden llamar a la API (sin / final)
 
 Conditions:
   Archivar: !Equals [!Ref ArchivarFeatures, "true"]
+  ConApi: !Not [!Equals [!Ref CognitoUserPoolId, ""]]
 
 Resources:
   # ------------------------------------------------------------- DynamoDB
@@ -170,6 +185,118 @@ Resources:
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !GetAtt ReglaFeatures.Arn
 
+  # ------------------------------------------------------------- API del historial
+  # HTTP API (más barata que REST) con autorizador JWT de Cognito: el dashboard manda su id_token.
+  # GET /predicciones?thing=&desde=&hasta=  →  Lambda (solo dynamodb:Query)  →  tabla
+  LogsApi:
+    Type: AWS::Logs::LogGroup
+    Condition: ConApi
+    Properties:
+      LogGroupName: /aws/lambda/pulsoseguro-historial
+      RetentionInDays: 14
+
+  RolApi:
+    Type: AWS::IAM::Role
+    Condition: ConApi
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: solo-lectura
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "${LogsApi.Arn}"
+              - Effect: Allow
+                Action: dynamodb:Query
+                Resource: !GetAtt TablaPredicciones.Arn
+
+  FuncionHistorial:
+    Type: AWS::Lambda::Function
+    Condition: ConApi
+    DependsOn: LogsApi
+    Properties:
+      FunctionName: pulsoseguro-historial
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: api_historial.lambda_handler
+      Code: ../lambda/api            # 'aws cloudformation package' lo sube a S3
+      MemorySize: 256                # más CPU para paginar y reducir hasta 5000 ítems
+      Timeout: 15
+      Role: !GetAtt RolApi.Arn
+      Environment:
+        Variables:
+          TABLA: !Ref TablaPredicciones
+
+  ApiHistorial:
+    Type: AWS::ApiGatewayV2::Api
+    Condition: ConApi
+    Properties:
+      Name: pulsoseguro-historial
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: !Ref OrigenesCors
+        AllowMethods: [GET]
+        AllowHeaders: [authorization]
+        MaxAge: 3600
+
+  AutorizadorCognito:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Condition: ConApi
+    Properties:
+      ApiId: !Ref ApiHistorial
+      Name: cognito
+      AuthorizerType: JWT
+      IdentitySource: ["$request.header.Authorization"]
+      JwtConfiguration:
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPoolId}"
+        Audience: [!Ref CognitoClientId]
+
+  IntegracionHistorial:
+    Type: AWS::ApiGatewayV2::Integration
+    Condition: ConApi
+    Properties:
+      ApiId: !Ref ApiHistorial
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt FuncionHistorial.Arn
+      PayloadFormatVersion: "2.0"
+
+  RutaPredicciones:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: ConApi
+    Properties:
+      ApiId: !Ref ApiHistorial
+      RouteKey: GET /predicciones
+      AuthorizationType: JWT
+      AuthorizerId: !Ref AutorizadorCognito
+      Target: !Sub "integrations/${IntegracionHistorial}"
+
+  EtapaApi:
+    Type: AWS::ApiGatewayV2::Stage
+    Condition: ConApi
+    Properties:
+      ApiId: !Ref ApiHistorial
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:            # tope de costo y de RCU: el panel pide 1 consulta por clic
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 2
+
+  PermisoApiInvoca:
+    Type: AWS::Lambda::Permission
+    Condition: ConApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref FuncionHistorial
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiHistorial}/*/GET/predicciones"
+
 Outputs:
   Tabla:
     Value: !Ref TablaPredicciones
@@ -177,3 +304,7 @@ Outputs:
     Value: !Ref FuncionPrediccion
   Regla:
     Value: !Ref ReglaFeatures
+  UrlApiHistorial:
+    Condition: ConApi
+    Description: Valor de VITE_HISTORY_API_URL en el dashboard
+    Value: !Sub "https://${ApiHistorial}.execute-api.${AWS::Region}.amazonaws.com"
