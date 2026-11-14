@@ -1,21 +1,26 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
+import { Responsive, useContainerWidth } from "react-grid-layout"
+import "react-grid-layout/css/styles.css"
 import { config } from "../config"
+import { ALTO_FILA, COLUMNAS, disenoInicial, MARGEN, NOMBRES_PANEL, PUNTOS, type IdPanel, type Punto } from "../diseno/diseno"
 import type { Telemetria } from "../telemetria/useTelemetria"
 import { useTelemetria } from "../telemetria/useTelemetria"
 import { haceCuanto, useAhora } from "../utilidades/tiempo"
 import { AlertaCaida } from "./AlertaCaida"
-import { GraficaLinea } from "./GraficaLinea"
+import { GraficaLinea, type Serie } from "./GraficaLinea"
 import { HistorialPredicciones } from "./HistorialPredicciones"
 import { ListaEventos } from "./ListaEventos"
 import { OndaPPG } from "./OndaPPG"
 import { PanelCaptura } from "./PanelCaptura"
-import { TarjetasVitales } from "./TarjetasVitales"
+import { TarjetaVital } from "./TarjetasVitales"
 
 const VENTANAS = [
   { id: 1, nombre: "1 min" },
   { id: 5, nombre: "5 min" },
   { id: 10, nombre: "10 min" },
 ] as const
+
+const PANELES: IdPanel[] = ["estado", "fc", "spo2", "sensor", "tendencias", "eventos", "ppg", "captura", "historial"]
 
 interface Props {
   thing: string
@@ -28,11 +33,22 @@ export function Monitor({ thing, idToken }: Props) {
   const ahora = useAhora(1000)
   const [minutos, setMinutos] = useState<(typeof VENTANAS)[number]["id"]>(5)
 
+  // ---- Cuadrícula editable ----
+  const visibles = useMemo(() => PANELES.filter(id => id !== "captura" || config.permitirComandos), [])
+  const [disenos, setDisenos] = useState(() => disenoInicial(visibles))
+  const [punto, setPunto] = useState<Punto>("lg")
+  const [editando, setEditando] = useState(false)
+  const { width, containerRef, mounted } = useContainerWidth()
+  // En móvil (1 columna) el diseño es fijo.
+  const puedeEditar = punto !== "sm"
+  const editable = editando && puedeEditar
+
+  // ---- Series de las gráficas ----
   const horizonte = (tel.pred?.horizonte_s ?? 10) * 1000
   const desde = ahora - minutos * 60_000
   const hasta = ahora + horizonte
 
-  const seriesFc = useMemo(
+  const seriesFc = useMemo<Serie[]>(
     () => [
       {
         id: "fc",
@@ -52,77 +68,131 @@ export function Monitor({ thing, idToken }: Props) {
     [tel.historialVitals, tel.historialPred],
   )
 
-  const serieSpo2 = useMemo(
+  const serieSpo2 = useMemo<Serie[]>(
     () => [{ id: "spo2", nombre: "SpO₂", color: "var(--serie-1)", puntos: tel.historialVitals.map(v => ({ t: v.t, v: v.spo2 })) }],
     [tel.historialVitals],
   )
 
+  const contenido = (id: IdPanel): ReactNode => {
+    switch (id) {
+      case "estado":
+      case "fc":
+      case "spo2":
+      case "sensor":
+        return <TarjetaVital tipo={id} vitals={tel.vitals} pred={tel.pred} ahora={ahora} />
+
+      case "tendencias":
+        return (
+          <section className="panel" aria-labelledby="titulo-tendencias">
+            <div className="panel-encabezado">
+              <h2 id="titulo-tendencias" className="panel-titulo">Tendencias en vivo</h2>
+              <div className="segmentado" role="group" aria-label="Ventana de tiempo">
+                {VENTANAS.map(v => (
+                  <button key={v.id} type="button" aria-pressed={minutos === v.id} onClick={() => setMinutos(v.id)}>
+                    {v.nombre}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <GraficaLinea
+              titulo="Frecuencia cardiaca"
+              unidad="lpm"
+              series={seriesFc}
+              desde={desde}
+              hasta={hasta}
+              ahora={ahora}
+              yMin={60}
+              yMax={100}
+              alto={240}
+              decimales={0}
+            />
+            <GraficaLinea titulo="SpO₂" unidad="%" series={serieSpo2} desde={desde} hasta={hasta} yMin={90} yMax={100} alto={160} />
+          </section>
+        )
+
+      case "eventos":
+        return <ListaEventos eventos={tel.eventos} />
+
+      case "ppg":
+        return (
+          <section className="panel" aria-labelledby="titulo-ppg">
+            <div className="panel-encabezado">
+              <h2 id="titulo-ppg" className="panel-titulo">Onda de pulso (PPG)</h2>
+              <label className="interruptor">
+                <input type="checkbox" checked={tel.verPPG} onChange={e => tel.setVerPPG(e.target.checked)} />
+                <span>Recibir señal cruda</span>
+              </label>
+            </div>
+            {tel.verPPG ? (
+              <>
+                <OndaPPG muestras={tel.ppg} />
+                <p className="tarjeta-pie">
+                  {tel.sesionPPG
+                    ? `Sesión ${tel.sesionPPG.sesion} · ${tel.sesionPPG.label} · ${tel.sesionPPG.sujeto} · ${tel.muestrasPerdidas} muestras perdidas`
+                    : "Esperando lotes… la pulsera solo envía la señal cruda durante una sesión de captura (entre start y stop)."}
+                </p>
+              </>
+            ) : (
+              <p className="vacio">
+                Desactivado por defecto: suscribirse a <code>data</code> suma ~2,400 mensajes/h de ~10 KB en AWS IoT.
+              </p>
+            )}
+          </section>
+        )
+
+      case "captura":
+        return <PanelCaptura conectado={tel.conexion === "conectado"} publicar={tel.publicar} ahora={ahora} />
+
+      case "historial":
+        return <HistorialPredicciones thing={thing} idToken={idToken} />
+    }
+  }
+
   return (
     <>
-      <BarraEstado tel={tel} ahora={ahora} />
+      <BarraEstado
+        tel={tel}
+        ahora={ahora}
+        editando={editable}
+        puedeEditar={puedeEditar}
+        alEditar={() => setEditando(e => !e)}
+      />
       <AvisoConexion tel={tel} />
       <AlertaCaida inicio={tel.inicioCaida} />
-      <TarjetasVitales vitals={tel.vitals} pred={tel.pred} ahora={ahora} />
+      {editable && (
+        <p className="aviso-edicion" role="status">
+          Arrastra un panel para moverlo y usa sus bordes o la esquina inferior derecha para cambiar su tamaño. Pulsa{" "}
+          <strong>Listo</strong> al terminar.
+        </p>
+      )}
 
-      <div className="cuadricula">
-        <section className="panel panel-ancho" aria-labelledby="titulo-tendencias">
-          <div className="panel-encabezado">
-            <h2 id="titulo-tendencias" className="panel-titulo">Tendencias en vivo</h2>
-            <div className="segmentado" role="group" aria-label="Ventana de tiempo">
-              {VENTANAS.map(v => (
-                <button key={v.id} type="button" aria-pressed={minutos === v.id} onClick={() => setMinutos(v.id)}>
-                  {v.nombre}
-                </button>
-              ))}
-            </div>
-          </div>
-          <GraficaLinea
-            titulo="Frecuencia cardiaca"
-            unidad="lpm"
-            series={seriesFc}
-            desde={desde}
-            hasta={hasta}
-            ahora={ahora}
-            yMin={60}
-            yMax={100}
-            alto={240}
-            decimales={0}
-          />
-          <GraficaLinea titulo="SpO₂" unidad="%" series={serieSpo2} desde={desde} hasta={hasta} yMin={90} yMax={100} alto={160} />
-        </section>
-
-        <ListaEventos eventos={tel.eventos} />
-      </div>
-
-      <section className="panel" aria-labelledby="titulo-ppg">
-        <div className="panel-encabezado">
-          <h2 id="titulo-ppg" className="panel-titulo">Onda de pulso (PPG)</h2>
-          <label className="interruptor">
-            <input type="checkbox" checked={tel.verPPG} onChange={e => tel.setVerPPG(e.target.checked)} />
-            <span>Recibir señal cruda</span>
-          </label>
-        </div>
-        {tel.verPPG ? (
-          <>
-            <OndaPPG muestras={tel.ppg} />
-            <p className="tarjeta-pie">
-              {tel.sesionPPG
-                ? `Sesión ${tel.sesionPPG.sesion} · ${tel.sesionPPG.label} · ${tel.sesionPPG.sujeto} · ${tel.muestrasPerdidas} muestras perdidas`
-                : "Esperando lotes… la pulsera solo envía la señal cruda durante una sesión de captura (entre start y stop)."}
-            </p>
-          </>
-        ) : (
-          <p className="vacio">
-            Desactivado por defecto: suscribirse a <code>data</code> suma ~2,400 mensajes/h de ~10 KB en AWS IoT.
-          </p>
+      <div ref={containerRef} className={`cuadricula-paneles ${editable ? "editando" : ""}`}>
+        {mounted && (
+          <Responsive
+            width={width}
+            layouts={disenos}
+            breakpoints={PUNTOS}
+            cols={COLUMNAS}
+            rowHeight={ALTO_FILA}
+            margin={MARGEN}
+            containerPadding={[0, 0]}
+            dragConfig={{ enabled: editable }}
+            resizeConfig={{ enabled: editable, handles: ["se", "e", "s"] }}
+            onLayoutChange={(_, todos) => setDisenos(todos as typeof disenos)}
+            onBreakpointChange={nuevo => setPunto(nuevo as Punto)}
+          >
+            {visibles.map(id => (
+              <div key={id} className="celda" aria-label={NOMBRES_PANEL[id]}>
+                {editable && (
+                  <span className="celda-etiqueta" aria-hidden="true">
+                    ⠿ {NOMBRES_PANEL[id]}
+                  </span>
+                )}
+                <div className="celda-contenido">{contenido(id)}</div>
+              </div>
+            ))}
+          </Responsive>
         )}
-      </section>
-
-      <div className="cuadricula cuadricula-pareja">
-        {config.permitirComandos && (
-          <PanelCaptura conectado={tel.conexion === "conectado"} publicar={tel.publicar} ahora={ahora} />
-        )}
-        <HistorialPredicciones thing={thing} idToken={idToken} />
       </div>
 
       {config.demo && (
@@ -152,13 +222,21 @@ const TEXTO_CONEXION: Record<Telemetria["conexion"], string> = {
   error: "Sin conexión",
 }
 
-function BarraEstado({ tel, ahora }: { tel: Telemetria; ahora: number }) {
+interface PropsBarra {
+  tel: Telemetria
+  ahora: number
+  editando: boolean
+  puedeEditar: boolean
+  alEditar: () => void
+}
+
+function BarraEstado({ tel, ahora, editando, puedeEditar, alEditar }: PropsBarra) {
   const claseConexion =
     tel.conexion === "conectado" ? "estado-bien" : tel.conexion === "error" ? "estado-critico" : "estado-aviso"
   const clasePulsera = tel.online === null ? "estado-neutro" : tel.online ? "estado-bien" : "estado-critico"
   return (
-    <div className="barra-estado" role="status">
-      <span className={`insignia ${claseConexion}`}>
+    <div className="barra-estado">
+      <span className={`insignia ${claseConexion}`} role="status">
         <span className="punto" aria-hidden="true" />
         {config.demo ? "Datos simulados" : TEXTO_CONEXION[tel.conexion]}
       </span>
@@ -167,6 +245,16 @@ function BarraEstado({ tel, ahora }: { tel: Telemetria; ahora: number }) {
         Pulsera {tel.online === null ? "sin estado" : tel.online ? "en línea" : "desconectada"}
       </span>
       {tel.vitals && <span className="barra-texto">Último dato {haceCuanto(ahora - tel.vitals.recibido)}</span>}
+      {puedeEditar && (
+        <button
+          type="button"
+          className={`boton barra-accion ${editando ? "boton-primario" : ""}`}
+          aria-pressed={editando}
+          onClick={alEditar}
+        >
+          {editando ? "Listo" : "Editar diseño"}
+        </button>
+      )}
     </div>
   )
 }

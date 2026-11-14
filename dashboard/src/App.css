@@ -77,21 +77,95 @@
   gap: 16px;
 }
 
-.cuadricula {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 16px;
-  align-items: start;
+/* ---------- Cuadrícula editable (react-grid-layout) ---------- */
+.cuadricula-paneles {
+  position: relative;
+  /* La cuadrícula ocupa todo el ancho; react-grid-layout pone las posiciones. */
+  margin: 0 -2px;
+  padding: 0 2px;
 }
 
-.cuadricula-pareja {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+.celda {
+  display: flex;
+  flex-direction: column;
 }
 
-@media (max-width: 900px) {
-  .cuadricula {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.celda-contenido {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Cada panel o tarjeta llena su celda; si el contenido no cabe, se desplaza. */
+.celda-contenido > .panel,
+.celda-contenido > .tarjeta {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.react-grid-item.react-grid-placeholder {
+  background: var(--acento);
+  opacity: 0.15;
+  border-radius: var(--radio);
+}
+
+/* Modo edición: el panel entero se arrastra, su contenido no responde a clics. */
+.cuadricula-paneles.editando .celda {
+  cursor: grab;
+  border-radius: var(--radio);
+  outline: 2px dashed color-mix(in srgb, var(--acento) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.cuadricula-paneles.editando .celda-contenido {
+  pointer-events: none;
+  user-select: none;
+}
+
+.cuadricula-paneles.editando .react-draggable-dragging {
+  cursor: grabbing;
+  z-index: 5;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+
+.celda-etiqueta {
+  position: absolute;
+  top: -10px;
+  left: 12px;
+  z-index: 2;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--acento);
+  color: var(--acento-texto);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Asas de redimensionar visibles y con color del tema mientras se edita. */
+.cuadricula-paneles.editando .react-grid-item > .react-resizable-handle {
+  opacity: 1;
+}
+
+.cuadricula-paneles.editando .react-grid-item > .react-resizable-handle::after {
+  border-color: var(--acento);
+}
+
+.aviso-edicion {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px dashed var(--acento);
+  background: color-mix(in srgb, var(--acento) 8%, var(--superficie));
+  font-size: 0.88rem;
+}
+
+.barra-accion {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 600px) {
@@ -135,12 +209,6 @@
 .panel-titulo {
   font-size: 1rem;
   font-weight: 650;
-}
-
-.tarjetas {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-  gap: 16px;
 }
 
 .tarjeta {
