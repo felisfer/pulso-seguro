@@ -327,10 +327,6 @@
 }
 
 /* Estado general: el color acompaña al ícono y al texto, nunca va solo. */
-.tarjeta-estado {
-  border-left-width: 5px;
-}
-
 .estado-valor {
   display: flex;
   align-items: center;
@@ -340,22 +336,16 @@
   min-height: 2.86rem;
 }
 
-/* Tarjetas con tono (Estado general, Sensor): cada estado define --tono* y la
-   tarjeta entera se tiñe. verde = bien, naranja = precaución, rojo = crítico. */
+/* Tarjetas con tono (Estado general, Sensor). En estado normal (.estado-bien) se ven
+   como cualquier otra tarjeta: solo el ícono ✓ lleva el verde. Con una anomalía
+   (naranja = precaución, rojo = crítico, gris = sin datos) la tarjeta entera se tiñe. */
 .tarjeta-tono {
   --tono: var(--neutro);
   --tono-texto: var(--texto-3);
   --tono-fondo: var(--superficie);
-  border-color: color-mix(in srgb, var(--tono) 40%, var(--borde));
-  background: var(--tono-fondo);
   transition:
     background-color 0.4s,
     border-color 0.4s;
-}
-.tarjeta-tono.estado-bien {
-  --tono: var(--bien);
-  --tono-texto: var(--bien-texto);
-  --tono-fondo: var(--bien-fondo);
 }
 .tarjeta-tono.estado-precaucion {
   --tono: var(--naranja);
@@ -367,16 +357,24 @@
   --tono-texto: var(--critico-texto);
   --tono-fondo: var(--critico-fondo);
 }
-.tarjeta-tono .estado-valor,
-.tarjeta-tono .valor-texto,
-.tarjeta-tono .tarjeta-titulo {
+.tarjeta-tono:not(.estado-bien) {
+  border-color: color-mix(in srgb, var(--tono) 40%, var(--borde));
+  background: var(--tono-fondo);
+}
+.tarjeta-tono:not(.estado-bien) .estado-valor,
+.tarjeta-tono:not(.estado-bien) .valor-texto,
+.tarjeta-tono:not(.estado-bien) .tarjeta-titulo {
   color: var(--tono-texto);
 }
-.tarjeta-tono .tarjeta-pie {
+.tarjeta-tono:not(.estado-bien) .tarjeta-pie {
   color: color-mix(in srgb, var(--tono-texto) 70%, var(--texto-2));
 }
-.tarjeta-estado {
-  border-left-color: var(--tono);
+.tarjeta-estado:not(.estado-bien) {
+  border-left: 5px solid var(--tono);
+}
+.tarjeta-tono.estado-bien .estado-valor svg,
+.tarjeta-tono.estado-bien .valor-texto svg {
+  color: var(--bien-texto);
 }
 
 .valor-texto {
