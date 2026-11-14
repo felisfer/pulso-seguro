@@ -78,7 +78,7 @@ export function Tablero({ usuario, idToken, onSalir }: Props) {
             <code>VITE_DEMO=true</code> para ver la interfaz con datos simulados.
           </div>
         ) : (
-          <Monitor key={thing} thing={thing} idToken={idToken} />
+          <Monitor key={thing} thing={thing} idToken={idToken} usuario={usuario} />
         )}
       </main>
     </div>

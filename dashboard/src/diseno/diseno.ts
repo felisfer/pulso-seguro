@@ -103,3 +103,70 @@ export function disenoInicial(visibles: IdPanel[]): ResponsiveLayouts<Punto> {
   const filtrar = (l: Layout) => l.filter(it => visibles.includes(it.i as IdPanel))
   return { lg: filtrar(LG), md: filtrar(MD), sm: filtrar(SM) }
 }
+
+// ---------- Guardado en el navegador ----------
+// Se guarda por usuario en localStorage. Solo las anchuras editables (lg y md);
+// en móvil (sm) siempre se usa el diseño fijo de una columna.
+// Si cambias los paneles o sus tamaños por defecto de forma incompatible, sube VERSION.
+
+const VERSION = 1
+const PUNTOS_GUARDADOS: Punto[] = ["lg", "md"]
+
+export const claveDiseno = (usuario?: string) => `pulso-seguro:diseno:v${VERSION}:${usuario || "anonimo"}`
+
+const esItemValido = (x: unknown): x is LayoutItem => {
+  const it = x as Partial<LayoutItem>
+  return (
+    typeof it?.i === "string" &&
+    [it.x, it.y, it.w, it.h].every(n => typeof n === "number" && Number.isFinite(n) && n >= 0) &&
+    (it.w ?? 0) > 0 &&
+    (it.h ?? 0) > 0
+  )
+}
+
+/**
+ * Diseño guardado del usuario, combinado con el inicial: se ignoran paneles que ya no
+ * se muestran y se agregan con su posición inicial los que falten. Respeta los mínimos actuales.
+ */
+export function cargarDiseno(clave: string, visibles: IdPanel[]): ResponsiveLayouts<Punto> {
+  const inicial = disenoInicial(visibles)
+  let guardado: Partial<Record<Punto, unknown>>
+  try {
+    guardado = JSON.parse(localStorage.getItem(clave) ?? "{}") ?? {}
+  } catch {
+    return inicial
+  }
+  const resultado = { ...inicial }
+  for (const p of PUNTOS_GUARDADOS) {
+    const lista = Array.isArray(guardado[p]) ? (guardado[p] as unknown[]).filter(esItemValido) : []
+    if (lista.length === 0) continue
+    const cols = COLUMNAS[p]
+    resultado[p] = (inicial[p] ?? []).map(base => {
+      const g = lista.find(it => it.i === base.i)
+      if (!g) return base
+      const w = Math.min(Math.max(g.w, base.minW ?? 1), cols)
+      return { ...base, x: Math.min(g.x, cols - w), y: g.y, w, h: Math.max(g.h, base.minH ?? 1) }
+    })
+  }
+  return resultado
+}
+
+export function guardarDiseno(clave: string, disenos: ResponsiveLayouts<Punto>) {
+  const datos: Partial<Record<Punto, { i: string; x: number; y: number; w: number; h: number }[]>> = {}
+  for (const p of PUNTOS_GUARDADOS) {
+    datos[p] = (disenos[p] ?? []).map(({ i, x, y, w, h }) => ({ i, x, y, w, h }))
+  }
+  try {
+    localStorage.setItem(clave, JSON.stringify(datos))
+  } catch {
+    /* almacenamiento lleno o bloqueado: el diseño solo dura esta sesión */
+  }
+}
+
+export function borrarDiseno(clave: string) {
+  try {
+    localStorage.removeItem(clave)
+  } catch {
+    /* almacenamiento bloqueado */
+  }
+}

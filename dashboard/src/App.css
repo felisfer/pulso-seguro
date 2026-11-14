@@ -212,8 +212,14 @@
   font-size: 0.88rem;
 }
 
-.barra-accion {
+.barra-acciones {
   margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.barra-accion {
   padding: 4px 12px;
   font-size: 0.85rem;
 }

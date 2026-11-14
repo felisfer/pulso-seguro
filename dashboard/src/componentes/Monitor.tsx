@@ -2,7 +2,20 @@ import { useMemo, useState, type ReactNode } from "react"
 import { Responsive, useContainerWidth } from "react-grid-layout"
 import "react-grid-layout/css/styles.css"
 import { config } from "../config"
-import { ALTO_FILA, COLUMNAS, disenoInicial, MARGEN, NOMBRES_PANEL, PUNTOS, type IdPanel, type Punto } from "../diseno/diseno"
+import {
+  ALTO_FILA,
+  borrarDiseno,
+  cargarDiseno,
+  claveDiseno,
+  COLUMNAS,
+  disenoInicial,
+  guardarDiseno,
+  MARGEN,
+  NOMBRES_PANEL,
+  PUNTOS,
+  type IdPanel,
+  type Punto,
+} from "../diseno/diseno"
 import type { Telemetria } from "../telemetria/useTelemetria"
 import { useTelemetria } from "../telemetria/useTelemetria"
 import { haceCuanto, useAhora } from "../utilidades/tiempo"
@@ -25,17 +38,22 @@ const PANELES: IdPanel[] = ["estado", "fc", "spo2", "sensor", "tendencias", "eve
 interface Props {
   thing: string
   idToken?: string
+  /** Identifica al usuario para guardar su diseño (p. ej. su correo). */
+  usuario?: string
 }
 
 /** Monta con `key={thing}` para reiniciar todo al cambiar de pulsera. */
-export function Monitor({ thing, idToken }: Props) {
+export function Monitor({ thing, idToken, usuario }: Props) {
   const tel = useTelemetria(thing, idToken)
   const ahora = useAhora(1000)
   const [minutos, setMinutos] = useState<(typeof VENTANAS)[number]["id"]>(5)
 
   // ---- Cuadrícula editable ----
   const visibles = useMemo(() => PANELES.filter(id => id !== "captura" || config.permitirComandos), [])
-  const [disenos, setDisenos] = useState(() => disenoInicial(visibles))
+  const clave = claveDiseno(usuario)
+  const [disenos, setDisenos] = useState(() => cargarDiseno(clave, visibles))
+  // Al restablecer se vuelve a montar la cuadrícula para que tome el diseño inicial.
+  const [version, setVersion] = useState(0)
   const [punto, setPunto] = useState<Punto>("lg")
   const [editando, setEditando] = useState(false)
   const { width, containerRef, mounted } = useContainerWidth()
@@ -156,19 +174,26 @@ export function Monitor({ thing, idToken }: Props) {
         editando={editable}
         puedeEditar={puedeEditar}
         alEditar={() => setEditando(e => !e)}
+        alRestablecer={() => {
+          borrarDiseno(clave)
+          setDisenos(disenoInicial(visibles))
+          setVersion(v => v + 1)
+        }}
       />
       <AvisoConexion tel={tel} />
       <AlertaCaida inicio={tel.inicioCaida} />
       {editable && (
         <p className="aviso-edicion" role="status">
-          Arrastra un panel para moverlo y usa sus bordes o la esquina inferior derecha para cambiar su tamaño. Pulsa{" "}
-          <strong>Listo</strong> al terminar.
+          Arrastra un panel para moverlo y usa sus bordes o la esquina inferior derecha para cambiar su tamaño. Los
+          cambios se guardan en este navegador. Pulsa <strong>Listo</strong> al terminar o{" "}
+          <strong>Restablecer diseño</strong> para volver al original.
         </p>
       )}
 
       <div ref={containerRef} className={`cuadricula-paneles ${editable ? "editando" : ""}`}>
         {mounted && (
           <Responsive
+            key={version}
             width={width}
             layouts={disenos}
             breakpoints={PUNTOS}
@@ -178,7 +203,12 @@ export function Monitor({ thing, idToken }: Props) {
             containerPadding={[0, 0]}
             dragConfig={{ enabled: editable }}
             resizeConfig={{ enabled: editable, handles: ["se", "e", "s"] }}
-            onLayoutChange={(_, todos) => setDisenos(todos as typeof disenos)}
+            onLayoutChange={(_, todos) => {
+              const nuevos = todos as typeof disenos
+              setDisenos(nuevos)
+              // Solo se guarda lo que el usuario cambia en modo edición.
+              if (editable) guardarDiseno(clave, nuevos)
+            }}
             onBreakpointChange={nuevo => setPunto(nuevo as Punto)}
           >
             {visibles.map(id => (
@@ -228,9 +258,10 @@ interface PropsBarra {
   editando: boolean
   puedeEditar: boolean
   alEditar: () => void
+  alRestablecer: () => void
 }
 
-function BarraEstado({ tel, ahora, editando, puedeEditar, alEditar }: PropsBarra) {
+function BarraEstado({ tel, ahora, editando, puedeEditar, alEditar, alRestablecer }: PropsBarra) {
   const claseConexion =
     tel.conexion === "conectado" ? "estado-bien" : tel.conexion === "error" ? "estado-critico" : "estado-aviso"
   const clasePulsera = tel.online === null ? "estado-neutro" : tel.online ? "estado-bien" : "estado-critico"
@@ -246,14 +277,21 @@ function BarraEstado({ tel, ahora, editando, puedeEditar, alEditar }: PropsBarra
       </span>
       {tel.vitals && <span className="barra-texto">Último dato {haceCuanto(ahora - tel.vitals.recibido)}</span>}
       {puedeEditar && (
-        <button
-          type="button"
-          className={`boton barra-accion ${editando ? "boton-primario" : ""}`}
-          aria-pressed={editando}
-          onClick={alEditar}
-        >
-          {editando ? "Listo" : "Editar diseño"}
-        </button>
+        <span className="barra-acciones">
+          {editando && (
+            <button type="button" className="boton barra-accion" onClick={alRestablecer}>
+              Restablecer diseño
+            </button>
+          )}
+          <button
+            type="button"
+            className={`boton barra-accion ${editando ? "boton-primario" : ""}`}
+            aria-pressed={editando}
+            onClick={alEditar}
+          >
+            {editando ? "Listo" : "Editar diseño"}
+          </button>
+        </span>
       )}
     </div>
   )
