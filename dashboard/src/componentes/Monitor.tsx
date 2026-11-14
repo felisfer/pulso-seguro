@@ -83,7 +83,7 @@ export function Monitor({ thing, idToken }: Props) {
 
       case "tendencias":
         return (
-          <section className="panel" aria-labelledby="titulo-tendencias">
+          <section className="panel panel-lleno" aria-labelledby="titulo-tendencias">
             <div className="panel-encabezado">
               <h2 id="titulo-tendencias" className="panel-titulo">Tendencias en vivo</h2>
               <div className="segmentado" role="group" aria-label="Ventana de tiempo">
@@ -103,10 +103,10 @@ export function Monitor({ thing, idToken }: Props) {
               ahora={ahora}
               yMin={60}
               yMax={100}
-              alto={240}
+              peso={3}
               decimales={0}
             />
-            <GraficaLinea titulo="SpO₂" unidad="%" series={serieSpo2} desde={desde} hasta={hasta} yMin={90} yMax={100} alto={160} />
+            <GraficaLinea titulo="SpO₂" unidad="%" series={serieSpo2} desde={desde} hasta={hasta} yMin={90} yMax={100} peso={2} />
           </section>
         )
 
@@ -115,7 +115,7 @@ export function Monitor({ thing, idToken }: Props) {
 
       case "ppg":
         return (
-          <section className="panel" aria-labelledby="titulo-ppg">
+          <section className="panel panel-lleno" aria-labelledby="titulo-ppg">
             <div className="panel-encabezado">
               <h2 id="titulo-ppg" className="panel-titulo">Onda de pulso (PPG)</h2>
               <label className="interruptor">

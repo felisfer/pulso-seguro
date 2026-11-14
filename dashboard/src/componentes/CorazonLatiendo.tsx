@@ -3,6 +3,7 @@ import type { CSSProperties } from "react"
 interface Props {
   /** FC en lpm; `null` detiene el latido (sin lectura o datos viejos). */
   fc: number | null
+  /** Tamaño fijo en px; si se omite, llena su contenedor. */
   tam?: number
 }
 
@@ -10,10 +11,10 @@ interface Props {
  * Corazón que late al ritmo de la FC medida: un ciclo "lub-dub" cada 60/FC segundos.
  * La duración se redondea a 50 ms para no reiniciar la animación con cada variación mínima.
  */
-export function CorazonLatiendo({ fc, tam = 64 }: Props) {
+export function CorazonLatiendo({ fc, tam }: Props) {
   const late = fc !== null && fc >= 20 && fc <= 250
   const duracion = late ? Math.round(60_000 / fc / 50) * 50 : 1000
-  const estilo = { "--duracion-latido": `${duracion}ms`, width: tam, height: tam } as CSSProperties
+  const estilo = { "--duracion-latido": `${duracion}ms`, ...(tam ? { width: tam, height: tam } : {}) } as CSSProperties
 
   return (
     <div className={`corazon ${late ? "latiendo" : "detenido"}`} style={estilo} aria-hidden="true">

@@ -3,6 +3,7 @@ import type { CSSProperties } from "react"
 interface Props {
   /** `false` detiene las burbujas (sin lectura o datos viejos). */
   activo: boolean
+  /** Tamaño fijo en px; si se omite, llena su contenedor. */
   tam?: number
 }
 
@@ -20,9 +21,9 @@ const BURBUJAS = [
 /**
  * Agua con burbujas que suben hasta la superficie, como metáfora de la oxigenación.
  */
-export function BurbujasOxigeno({ activo, tam = 64 }: Props) {
+export function BurbujasOxigeno({ activo, tam }: Props) {
   return (
-    <div className={`burbujas ${activo ? "activas" : "detenidas"}`} style={{ width: tam, height: tam }} aria-hidden="true">
+    <div className={`burbujas ${activo ? "activas" : "detenidas"}`} style={tam ? { width: tam, height: tam } : undefined} aria-hidden="true">
       <svg viewBox="0 0 64 64">
         <defs>
           <clipPath id="burbujas-recorte">

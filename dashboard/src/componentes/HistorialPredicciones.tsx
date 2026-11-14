@@ -71,7 +71,7 @@ export function HistorialPredicciones({ thing, idToken }: { thing: string; idTok
   }
 
   return (
-    <section className="panel" aria-labelledby="titulo-historial">
+    <section className="panel panel-lleno" aria-labelledby="titulo-historial">
       <div className="panel-encabezado">
         <h2 id="titulo-historial" className="panel-titulo">Historial de predicciones</h2>
         {disponible && (

@@ -1,19 +1,24 @@
 import { useEffect, useRef } from "react"
 import type { MuestraPPG } from "../tipos"
-import { useAncho } from "../utilidades/useAncho"
+import { useTamano } from "../utilidades/useTamano"
 
 interface Props {
   muestras: MuestraPPG[]
+  /** Alto fijo en px. Si se omite, la onda llena el espacio libre de su panel. */
   alto?: number
 }
+
+const ALTO_MIN = 80
 
 /**
  * Onda PPG (canal IR) de los últimos segundos. Se invierte el IR para que el
  * pulso sistólico apunte hacia arriba (más sangre = menos luz reflejada).
  */
-export function OndaPPG({ muestras, alto = 160 }: Props) {
+export function OndaPPG({ muestras, alto: altoFijo }: Props) {
   const lienzo = useRef<HTMLCanvasElement>(null)
-  const [contenedor, ancho] = useAncho<HTMLDivElement>()
+  const [contenedor, { ancho, alto: altoMedido }] = useTamano<HTMLDivElement>()
+  const llenar = altoFijo === undefined
+  const alto = altoFijo ?? Math.max(ALTO_MIN, altoMedido)
 
   useEffect(() => {
     const canvas = lienzo.current
@@ -72,7 +77,7 @@ export function OndaPPG({ muestras, alto = 160 }: Props) {
   }, [muestras, ancho, alto])
 
   return (
-    <div ref={contenedor} className="ppg-lienzo" style={{ height: alto }}>
+    <div ref={contenedor} className={`ppg-lienzo ${llenar ? "ppg-llena" : ""}`} style={llenar ? undefined : { height: alto }}>
       <canvas
         ref={lienzo}
         style={{ width: ancho, height: alto }}

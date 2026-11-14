@@ -18,7 +18,7 @@ const ETIQUETA: Record<Severidad, string> = {
 
 export function ListaEventos({ eventos }: { eventos: Evento[] }) {
   return (
-    <section className="panel" aria-labelledby="titulo-eventos">
+    <section className="panel panel-lleno" aria-labelledby="titulo-eventos">
       <h2 id="titulo-eventos" className="panel-titulo">Eventos recientes</h2>
       {eventos.length === 0 ? (
         <p className="vacio">Sin eventos en esta sesión del navegador.</p>

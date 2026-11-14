@@ -1,5 +1,5 @@
 import { useId, useMemo, useState, type PointerEvent } from "react"
-import { useAncho } from "../utilidades/useAncho"
+import { useTamano } from "../utilidades/useTamano"
 import { horaConSegundos, horaCorta } from "../utilidades/tiempo"
 
 export interface Punto {
@@ -25,7 +25,10 @@ interface Props {
   /** Rango mínimo visible del eje Y; se amplía si los datos lo exceden. */
   yMin?: number
   yMax?: number
+  /** Alto fijo en px. Si se omite, la gráfica llena el espacio libre de su panel. */
   alto?: number
+  /** En modo "llenar", proporción del espacio libre que toma frente a otras gráficas (flex-grow). */
+  peso?: number
   /** Distancia máxima entre puntos para unirlos con línea. */
   huecoMaxMs?: number
   /** Marca vertical de "ahora" (útil cuando hay predicciones hacia el futuro). */
@@ -36,6 +39,7 @@ interface Props {
 }
 
 const M = { arriba: 12, derecha: 16, abajo: 26, izquierda: 40 }
+const ALTO_MIN = 100
 
 function pasoBonito(rango: number, divisiones: number) {
   const bruto = rango / divisiones
@@ -52,14 +56,18 @@ export function GraficaLinea({
   hasta,
   yMin,
   yMax,
-  alto = 220,
+  alto,
+  peso = 1,
   huecoMaxMs = 5000,
   ahora,
   decimales = 0,
   vacio = "Esperando datos…",
   formatoEjeX,
 }: Props) {
-  const [contenedor, ancho] = useAncho<HTMLDivElement>()
+  const [contenedor, { ancho, alto: altoMedido }] = useTamano<HTMLDivElement>()
+  const llenar = alto === undefined
+  // En modo "llenar" el alto lo da el panel (con un mínimo para que siga siendo legible).
+  const altoReal = alto ?? Math.max(ALTO_MIN, altoMedido)
   const [cursorT, setCursorT] = useState<number | null>(null)
   const [verTabla, setVerTabla] = useState(false)
   const idTitulo = useId()
@@ -87,7 +95,7 @@ export function GraficaLinea({
   }, [series, desde, hasta, yMin, yMax])
 
   const anchoPlot = Math.max(10, ancho - M.izquierda - M.derecha)
-  const altoPlot = alto - M.arriba - M.abajo
+  const altoPlot = altoReal - M.arriba - M.abajo
   const x = (t: number) => M.izquierda + ((t - desde) / (hasta - desde)) * anchoPlot
   const y = (v: number) => M.arriba + (1 - (v - escala.lo) / (escala.hi - escala.lo)) * altoPlot
 
@@ -140,7 +148,11 @@ export function GraficaLinea({
   }, [verTabla, series, desde, hasta])
 
   return (
-    <figure className="grafica" aria-labelledby={idTitulo}>
+    <figure
+      className={`grafica ${llenar ? "grafica-llena" : ""}`}
+      style={llenar ? { flexGrow: peso } : undefined}
+      aria-labelledby={idTitulo}
+    >
       <figcaption className="grafica-encabezado">
         <h3 id={idTitulo}>
           {titulo} <span className="unidad">({unidad})</span>
@@ -163,7 +175,7 @@ export function GraficaLinea({
       </figcaption>
 
       {verTabla ? (
-        <div className="tabla-scroll" style={{ maxHeight: alto }}>
+        <div className="tabla-scroll" style={llenar ? undefined : { maxHeight: alto }}>
           <table className="tabla">
             <thead>
               <tr>
@@ -187,9 +199,9 @@ export function GraficaLinea({
           {filasTabla.length === 0 && <p className="vacio">{vacio}</p>}
         </div>
       ) : (
-        <div ref={contenedor} className="grafica-lienzo" style={{ height: alto }}>
+        <div ref={contenedor} className="grafica-lienzo" style={llenar ? undefined : { height: alto }}>
           {ancho > 0 && (
-            <svg width={ancho} height={alto} role="img" aria-label={`${titulo} en el tiempo`}>
+            <svg width={ancho} height={altoReal} role="img" aria-label={`${titulo} en el tiempo`}>
               {escala.ticks.map(v => (
                 <g key={v}>
                   <line className="rejilla" x1={M.izquierda} x2={ancho - M.derecha} y1={y(v)} y2={y(v)} />
@@ -199,7 +211,7 @@ export function GraficaLinea({
                 </g>
               ))}
               {ticksX.map(t => (
-                <text key={t} className="eje" x={x(t)} y={alto - 6} textAnchor="middle">
+                <text key={t} className="eje" x={x(t)} y={altoReal - 6} textAnchor="middle">
                   {fmtX(t)}
                 </text>
               ))}
